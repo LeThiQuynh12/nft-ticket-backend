@@ -3,9 +3,10 @@ const router = express.Router();
 const evt = require("../controllers/eventController");
 const { protect, adminOnly } = require("../middleware/authMiddleware");
 const upload = require("../middleware/uploadMiddleware");
+const optionalAuth = require('../middleware/optionalAuthMiddleware');
 
 // 🧩 Lấy danh sách sự kiện (public)
-router.get("/", evt.getEvents);
+router.get("/", optionalAuth, evt.getEvents);
 
 // 🧩 Lấy chi tiết sự kiện (public hoặc private tuỳ quyền)
 router.get("/:id", evt.getEventById);
@@ -19,6 +20,7 @@ router.post(
     { name: "coverImage", maxCount: 1 }, // Ảnh bìa
     { name: "gallery", maxCount: 10 },   // Bộ sưu tập ảnh
     { name: "seatMap", maxCount: 1 },    // Sơ đồ ghế
+    { name: "organizerLogo", maxCount: 1 },
   ]),
   evt.createEvent
 );
@@ -32,6 +34,7 @@ router.put(
     { name: "coverImage", maxCount: 1 },
     { name: "gallery", maxCount: 10 },
     { name: "seatMap", maxCount: 1 },
+    { name: "organizerLogo", maxCount: 1 },
   ]),
   evt.updateEvent
 );

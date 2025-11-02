@@ -10,7 +10,8 @@ const errorHandler = require("./middleware/errorHandling");
 const authRoutes = require("./routes/authRoutes");
 const eventRoutes = require("./routes/eventRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
-
+const locationRoutes = require("./routes/locationRoutes");
+const userRoutes = require("./routes/userRouters");
 dotenv.config();
 connectDB();
 
@@ -22,6 +23,7 @@ app.use(cors());
 app.use(globalLimiter);
 app.use(express.json({ limit: "10mb" }));
 
+
 // ⚡ Cho phép truy cập ảnh upload
 app.use("/uploads", express.static("uploads"));
 
@@ -29,7 +31,8 @@ app.use("/uploads", express.static("uploads"));
 app.use("/api/auth", authRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/categories", categoryRoutes);
-
+app.use('/api/locations', locationRoutes);
+app.use('/api/users', userRoutes);
 app.get("/", (req, res) => res.send("🎫 LuxGo Event Ticket Backend API is running"));
 
 // Error handler

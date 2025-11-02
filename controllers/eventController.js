@@ -26,6 +26,10 @@ exports.createEvent = async (req, res, next) => {
         (file) => `/uploads/${file.filename}`
       );
 
+    if (req.files?.organizerLogo?.[0]) {
+      payload.organizerLogo = `/uploads/${req.files.organizerLogo[0].filename}`;
+    }
+
     // 🎫 Parse danh sách vé (ticketTypes)
     if (payload.ticketTypes && typeof payload.ticketTypes === "string") {
       try {
@@ -67,10 +71,11 @@ exports.updateEvent = async (req, res, next) => {
       payload.seatMapUrl = `/uploads/${req.files.seatMap[0].filename}`;
 
     if (req.files?.gallery)
-      payload.gallery = req.files.gallery.map(
-        (f) => `/uploads/${f.filename}`
-      );
+      payload.gallery = req.files.gallery.map((f) => `/uploads/${f.filename}`);
 
+    if (req.files?.organizerLogo?.[0]) {
+      payload.organizerLogo = `/uploads/${req.files.organizerLogo[0].filename}`;
+    }
     // 🎫 Parse JSON cho ticketTypes & paymentInfo
     if (payload.ticketTypes && typeof payload.ticketTypes === "string") {
       try {
@@ -117,7 +122,20 @@ exports.getEvents = async (req, res, next) => {
     const limit = Math.min(50, parseInt(req.query.limit) || 12);
     const skip = (page - 1) * limit;
 
-    const filter = { privacy: "public" };
+    // default filter: public
+    let filter = { privacy: "public" };
+
+    // nếu query yêu cầu includePrivate và người gọi authenticated + admin => trả cả public + private
+    const includePrivate = req.query.includePrivate === 'true' || req.query.includePrivate === true;
+
+    if (includePrivate && req.user && req.user.role === 'admin') {
+      // no privacy filter => show both public & private
+      filter = {};
+    }
+
+    // optional: nếu muốn cho creator thấy private của họ:
+    // nếu req.user && req.query.own === 'true' => filter = { $or: [ { privacy: 'public' }, { createdBy: req.user.id } ] }
+
     if (req.query.category) filter.category = req.query.category;
     if (req.query.q) filter.name = new RegExp(req.query.q, "i");
     if (req.query.mode) filter.mode = req.query.mode;
@@ -135,6 +153,7 @@ exports.getEvents = async (req, res, next) => {
     next(err);
   }
 };
+
 
 // 🧩 Lấy chi tiết sự kiện
 exports.getEventById = async (req, res, next) => {

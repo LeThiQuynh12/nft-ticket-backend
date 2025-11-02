@@ -38,3 +38,12 @@ exports.deleteCategory = async (req, res, next) => {
     res.json({ message: 'Deleted' });
   } catch (err) { next(err); }
 };
+
+exports.getCategories = async (req, res) => {
+  try {
+    const categories = await Category.find().select('name');
+    res.json(categories);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};

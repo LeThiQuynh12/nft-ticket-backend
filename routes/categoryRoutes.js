@@ -9,5 +9,6 @@ router.get('/', catCtrl.getCategories);
 router.post('/', protect, adminOnly, catCtrl.createCategory);
 router.put('/:id', protect, adminOnly, catCtrl.updateCategory);
 router.delete('/:id', protect, adminOnly, catCtrl.deleteCategory);
+router.get('/', protect, adminOnly, catCtrl.getCategories);
 
 module.exports = router;

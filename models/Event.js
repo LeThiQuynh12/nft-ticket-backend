@@ -48,6 +48,7 @@ const EventSchema = new mongoose.Schema({
   coverImage: { type: String },
   gallery: [String],
   seatMapUrl: { type: String },
+  organizerLogo: { type: String },
 
   // 🎫 Loại vé
   ticketTypes: [TicketTypeSchema],
