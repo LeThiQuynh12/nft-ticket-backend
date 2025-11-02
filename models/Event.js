@@ -23,6 +23,15 @@ const PaymentSchema = new mongoose.Schema({
   },
 });
 
+// 📍 Schema địa điểm
+const LocationSchema = new mongoose.Schema({
+  name: { type: String, trim: true },          // Tên địa điểm
+  province: { type: String, trim: true },
+  district: { type: String, trim: true },
+  ward: { type: String, trim: true },
+  addressDetail: { type: String, trim: true },
+}, { _id: false }); // không cần id con
+
 const EventSchema = new mongoose.Schema({
   // 🔹 Thông tin cơ bản
   name: { type: String, required: true, trim: true },
@@ -31,13 +40,7 @@ const EventSchema = new mongoose.Schema({
   mode: { type: String, enum: ["offline", "online"], default: "offline" },
 
   // 📍 Địa điểm
-  location: {
-    name: String,
-    province: String,
-    district: String,
-    ward: String,
-    addressDetail: String,
-  },
+  location: LocationSchema,
 
   organizer: { type: String },
   category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },

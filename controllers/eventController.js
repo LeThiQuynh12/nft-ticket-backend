@@ -1,5 +1,6 @@
 const Event = require("../models/Event");
 const slugify = require("slugify");
+const { mapLocationName } = require('../utils/locationHelper'); // import helper
 
 // 🧩 Tạo sự kiện mới
 exports.createEvent = async (req, res, next) => {
@@ -48,6 +49,15 @@ exports.createEvent = async (req, res, next) => {
       }
     }
 
+    // 📍 Parse location JSON
+if (payload.location && typeof payload.location === "string") {
+  try {
+    payload.location = JSON.parse(payload.location);
+  } catch {
+    return res.status(400).json({ message: "Invalid location JSON" });
+  }
+}
+
     const event = await Event.create(payload);
     res.status(201).json({ message: "Event created successfully", event });
   } catch (err) {
@@ -93,6 +103,14 @@ exports.updateEvent = async (req, res, next) => {
       }
     }
 
+    // 📍 Parse location JSON
+if (payload.location && typeof payload.location === "string") {
+  try {
+    payload.location = JSON.parse(payload.location);
+  } catch {
+    return res.status(400).json({ message: "Invalid location JSON" });
+  }
+}
     const event = await Event.findByIdAndUpdate(id, payload, { new: true });
     if (!event) return res.status(404).json({ message: "Event not found" });
 
@@ -122,19 +140,9 @@ exports.getEvents = async (req, res, next) => {
     const limit = Math.min(50, parseInt(req.query.limit) || 12);
     const skip = (page - 1) * limit;
 
-    // default filter: public
     let filter = { privacy: "public" };
-
-    // nếu query yêu cầu includePrivate và người gọi authenticated + admin => trả cả public + private
-    const includePrivate = req.query.includePrivate === 'true' || req.query.includePrivate === true;
-
-    if (includePrivate && req.user && req.user.role === 'admin') {
-      // no privacy filter => show both public & private
-      filter = {};
-    }
-
-    // optional: nếu muốn cho creator thấy private của họ:
-    // nếu req.user && req.query.own === 'true' => filter = { $or: [ { privacy: 'public' }, { createdBy: req.user.id } ] }
+    const includePrivate = req.query.includePrivate === 'true';
+    if (includePrivate && req.user?.role === 'admin') filter = {};
 
     if (req.query.category) filter.category = req.query.category;
     if (req.query.q) filter.name = new RegExp(req.query.q, "i");
@@ -147,7 +155,14 @@ exports.getEvents = async (req, res, next) => {
       .skip(skip)
       .limit(limit);
 
-    res.json({ events, meta: { total, page, limit } });
+    // map location trước khi trả
+    const eventsWithLocationName = events.map(e => {
+      const obj = e.toObject();
+      obj.location = mapLocationName(obj.location);
+      return obj;
+    });
+
+    res.json({ events: eventsWithLocationName, meta: { total, page, limit } });
   } catch (err) {
     console.error("❌ Get Events Error:", err);
     next(err);
@@ -162,16 +177,17 @@ exports.getEventById = async (req, res, next) => {
     const event = await Event.findById(id).populate("category", "name slug");
     if (!event) return res.status(404).json({ message: "Not found" });
 
-    // 🔒 Kiểm tra quyền riêng tư
     if (event.privacy === "private") {
       if (!req.user) return res.status(403).json({ message: "Forbidden" });
       const isAdmin = req.user.role === "admin";
       const isCreator = req.user.id === String(event.createdBy);
-      if (!isAdmin && !isCreator)
-        return res.status(403).json({ message: "Forbidden" });
+      if (!isAdmin && !isCreator) return res.status(403).json({ message: "Forbidden" });
     }
 
-    res.json({ event });
+    const eventObj = event.toObject();
+    eventObj.location = mapLocationName(eventObj.location);
+
+    res.json({ event: eventObj });
   } catch (err) {
     console.error("❌ Get Event Error:", err);
     next(err);
