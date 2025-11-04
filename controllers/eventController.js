@@ -134,6 +134,7 @@ exports.deleteEvent = async (req, res, next) => {
 };
 
 // 🧩 Lấy danh sách sự kiện (public)
+// 🧩 Lấy danh sách sự kiện (public)
 exports.getEvents = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -141,10 +142,22 @@ exports.getEvents = async (req, res, next) => {
     const skip = (page - 1) * limit;
 
     let filter = { privacy: "public" };
-    const includePrivate = req.query.includePrivate === 'true';
-    if (includePrivate && req.user?.role === 'admin') filter = {};
+    const includePrivate = req.query.includePrivate === "true";
+    if (includePrivate && req.user?.role === "admin") filter = {};
 
-    if (req.query.category) filter.category = req.query.category;
+    // 🧩 Lọc theo category slug (VD: ?category=ca-nhac)
+    if (req.query.category) {
+      const Category = require("../models/Category");
+      const categoryDoc = await Category.findOne({ slug: req.query.category });
+      if (categoryDoc) {
+        filter.category = categoryDoc._id;
+      } else {
+        // Không có danh mục này thì trả về rỗng luôn
+        return res.json({ events: [], meta: { total: 0, page, limit } });
+      }
+    }
+
+    // 🧩 Các filter khác
     if (req.query.q) filter.name = new RegExp(req.query.q, "i");
     if (req.query.mode) filter.mode = req.query.mode;
 
@@ -155,8 +168,8 @@ exports.getEvents = async (req, res, next) => {
       .skip(skip)
       .limit(limit);
 
-    // map location trước khi trả
-    const eventsWithLocationName = events.map(e => {
+    // 🗺️ Map location đẹp
+    const eventsWithLocationName = events.map((e) => {
       const obj = e.toObject();
       obj.location = mapLocationName(obj.location);
       return obj;
@@ -168,6 +181,7 @@ exports.getEvents = async (req, res, next) => {
     next(err);
   }
 };
+
 
 
 // 🧩 Lấy chi tiết sự kiện
