@@ -9,20 +9,6 @@ const TicketTypeSchema = new mongoose.Schema({
   maxPerOrder: { type: Number, default: 10 },
 });
 
-// 💳 Schema thanh toán
-const PaymentSchema = new mongoose.Schema({
-  accountName: { type: String, trim: true },
-  accountNumber: { type: String, trim: true },
-  bankName: { type: String, trim: true },
-  branch: { type: String, trim: true },
-  invoice: {
-    businessType: { type: String, enum: ["Cá nhân", "Công ty"] },
-    fullName: { type: String, trim: true },
-    address: { type: String, trim: true },
-    taxCode: { type: String, trim: true },
-  },
-});
-
 // 📍 Schema địa điểm
 const LocationSchema = new mongoose.Schema({
   name: { type: String, trim: true },          // Tên địa điểm
@@ -62,8 +48,6 @@ const EventSchema = new mongoose.Schema({
   // 💬 Tin nhắn xác nhận
   confirmationMessage: { type: String, maxlength: 500 },
 
-  // 💳 Thanh toán
-  paymentInfo: PaymentSchema,
 
   // 🧍‍♂️ Người tạo
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },

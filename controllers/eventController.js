@@ -1,6 +1,6 @@
 const Event = require("../models/Event");
 const slugify = require("slugify");
-const { mapLocationName } = require('../utils/locationHelper'); // import helper
+const { mapLocationName } = require("../utils/locationHelper"); // import helper
 
 // 🧩 Tạo sự kiện mới
 exports.createEvent = async (req, res, next) => {
@@ -40,23 +40,14 @@ exports.createEvent = async (req, res, next) => {
       }
     }
 
-    // 💳 Parse paymentInfo nếu là JSON string
-    if (payload.paymentInfo && typeof payload.paymentInfo === "string") {
+    // 📍 Parse location JSON
+    if (payload.location && typeof payload.location === "string") {
       try {
-        payload.paymentInfo = JSON.parse(payload.paymentInfo);
+        payload.location = JSON.parse(payload.location);
       } catch {
-        return res.status(400).json({ message: "Invalid paymentInfo JSON" });
+        return res.status(400).json({ message: "Invalid location JSON" });
       }
     }
-
-    // 📍 Parse location JSON
-if (payload.location && typeof payload.location === "string") {
-  try {
-    payload.location = JSON.parse(payload.location);
-  } catch {
-    return res.status(400).json({ message: "Invalid location JSON" });
-  }
-}
 
     const event = await Event.create(payload);
     res.status(201).json({ message: "Event created successfully", event });
@@ -95,22 +86,14 @@ exports.updateEvent = async (req, res, next) => {
       }
     }
 
-    if (payload.paymentInfo && typeof payload.paymentInfo === "string") {
+    // 📍 Parse location JSON
+    if (payload.location && typeof payload.location === "string") {
       try {
-        payload.paymentInfo = JSON.parse(payload.paymentInfo);
+        payload.location = JSON.parse(payload.location);
       } catch {
-        return res.status(400).json({ message: "Invalid paymentInfo JSON" });
+        return res.status(400).json({ message: "Invalid location JSON" });
       }
     }
-
-    // 📍 Parse location JSON
-if (payload.location && typeof payload.location === "string") {
-  try {
-    payload.location = JSON.parse(payload.location);
-  } catch {
-    return res.status(400).json({ message: "Invalid location JSON" });
-  }
-}
     const event = await Event.findByIdAndUpdate(id, payload, { new: true });
     if (!event) return res.status(404).json({ message: "Event not found" });
 
@@ -182,8 +165,6 @@ exports.getEvents = async (req, res, next) => {
   }
 };
 
-
-
 // 🧩 Lấy chi tiết sự kiện
 exports.getEventById = async (req, res, next) => {
   try {
@@ -195,7 +176,8 @@ exports.getEventById = async (req, res, next) => {
       if (!req.user) return res.status(403).json({ message: "Forbidden" });
       const isAdmin = req.user.role === "admin";
       const isCreator = req.user.id === String(event.createdBy);
-      if (!isAdmin && !isCreator) return res.status(403).json({ message: "Forbidden" });
+      if (!isAdmin && !isCreator)
+        return res.status(403).json({ message: "Forbidden" });
     }
 
     const eventObj = event.toObject();
