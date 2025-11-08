@@ -13,7 +13,7 @@ const eventRoutes = require("./routes/eventRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const locationRoutes = require("./routes/locationRoutes");
 const userRoutes = require("./routes/userRouters");
-
+const paymentRoutes = require("./routes/paymentRoutes");
 dotenv.config();
 connectDB();
 
@@ -41,7 +41,7 @@ app.use("/api/events", eventRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/locations", locationRoutes);
 app.use("/api/users", userRoutes);
-
+app.use("/api/payments", paymentRoutes);
 app.get("/", (req, res) => res.send("🎫 LuxGo Event Ticket Backend API is running"));
 
 // ================== ⚠️ Error handler ==================
