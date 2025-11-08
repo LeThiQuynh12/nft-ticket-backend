@@ -5,60 +5,53 @@ const QRCode = require('qrcode');
 const crypto = require('crypto');
 const Order = require('../models/Order');
 const { generateSignature } = require('../utils/payosUtils');
+const Event = require('../models/Event');
 
-const PAYOS_API_URL = 'https://api-merchant.payos.vn/v2/payment-requests'; // theo sample Nest
-// nếu muốn dùng "payment-links" thay đổi url tương ứng
-
-const Event = require('../models/Event'); 
+const PAYOS_API_URL = 'https://api-merchant.payos.vn/v2/payment-requests';
 
 exports.createPayment = async (req, res) => {
   try {
-    const { orderId, eventId, tickets, description, buyerName, buyerPhone, buyerEmail } = req.body;
+    const { eventId, tickets, description, buyerName, buyerPhone, buyerEmail } = req.body;
 
-    if (!orderId || !eventId || !tickets || !tickets.length) {
-      return res.status(400).json({ message: 'orderId, eventId và tickets bắt buộc' });
+    if (!eventId || !tickets || !tickets.length) {
+      return res.status(400).json({ message: 'eventId và tickets bắt buộc' });
     }
 
-    // 1️⃣ Lấy event
     const event = await Event.findById(eventId);
     if (!event) return res.status(404).json({ message: 'Event không tồn tại' });
 
-    // 2️⃣ Tính tổng tiền dựa trên tickets
+    // Tính tổng tiền & chuẩn hóa tickets
     let totalAmount = 0;
     const ticketsDetails = [];
-
-tickets.forEach(t => {
-  const typeObj = event.ticketTypes.find(
-    tt => tt.name.toLowerCase() === t.ticketType.toLowerCase()
-  );
-  if (!typeObj) return;
-
-  const price = typeObj.price;
-  totalAmount += price;
-
-  ticketsDetails.push({
-    ticketType: t.ticketType,
-    price,
-    zone: t.zone,
-    seat: t.seat
-  });
-});
-
+    tickets.forEach(t => {
+      const typeObj = event.ticketTypes.find(
+        tt => tt.name.toLowerCase() === t.ticketType.toLowerCase()
+      );
+      if (!typeObj) return;
+      const price = typeObj.price;
+      totalAmount += price;
+      ticketsDetails.push({ ticketType: t.ticketType, price, zone: t.zone, seat: t.seat });
+    });
 
     if (!ticketsDetails.length) {
       return res.status(400).json({ message: 'Không có vé hợp lệ' });
     }
 
-    // ⚡ Mô tả tối đa 25 ký tự
+// Sinh orderId tự động
+const orderId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+// Tạo orderCode để gửi PayOS
+const orderCode = Date.now(); // hoặc Number(Date.now())
+
     const shortDescription = (description || `Thanh toán ${orderId}`).slice(0, 25);
 
-    // 3️⃣ Payload PayOS
+    // Gửi request đến PayOS
     const dataForSignature = {
-      orderCode: Number(orderId),
+      orderCode: Number(Date.now()),
       amount: totalAmount,
       description: shortDescription,
-      cancelUrl: process.env.FRONTEND_URL + '/payment-failed',
-      returnUrl: process.env.FRONTEND_URL + '/payment-success'
+  cancelUrl: process.env.FRONTEND_URL + '/payment-failed',
+  returnUrl: process.env.FRONTEND_URL + '/payment-success?orderCode=' + orderCode
     };
 
     const signature = generateSignature(dataForSignature, process.env.PAYOS_CHECKSUM_KEY);
@@ -77,27 +70,37 @@ tickets.forEach(t => {
       'Content-Type': 'application/json'
     };
 
-    // 4️⃣ Gọi PayOS
     const response = await axios.post(PAYOS_API_URL, payload, { headers });
     const respData = response.data;
 
-    // 5️⃣ Lưu đơn hàng local
-    const order = await Order.create({
-      orderId: String(orderId),
-      eventId,
-      tickets: ticketsDetails,
-      totalAmount,
-      customer: { name: buyerName, phone: buyerPhone, email: buyerEmail },
-      paymentUrl: respData?.data?.checkoutUrl || respData?.data?.qrCode || null,
-      status: 'pending'
+    // Lưu đơn hàng
+    const order = await Order.findOneAndUpdate(
+      { orderId },
+      {
+        eventId,
+        tickets: ticketsDetails,
+        totalAmount,
+        customer: { name: buyerName, phone: buyerPhone, email: buyerEmail },
+        paymentUrl: respData?.data?.checkoutUrl || respData?.data?.qrCode,
+        status: 'pending'
+      },
+      { upsert: true, new: true }
+    );
+
+    // Trả về payUrl và order, bỏ QR base64
+    return res.status(201).json({
+      success: true,
+      payUrl: respData?.data?.checkoutUrl || respData?.data?.qrCode,
+      order,
+      payosResponse: respData
     });
 
-    return res.status(201).json({ success: true, resp: respData, order, qrCode: qrCodeDataUrl });
   } catch (err) {
     console.error('createPayment error:', err.response?.data || err.message || err);
     res.status(500).json({ success: false, error: err.response?.data || err.message });
   }
 };
+
 
 // Webhook endpoint: nhận body { code, desc, success, data, signature }
 exports.payosWebhook = async (req, res) => {
