@@ -1,14 +1,18 @@
-// controllers/paymentController.js
 require('dotenv').config();
 const axios = require('axios');
-const QRCode = require('qrcode');
 const crypto = require('crypto');
 const Order = require('../models/Order');
 const { generateSignature } = require('../utils/payosUtils');
 const Event = require('../models/Event');
+const { mintTicket } = require("../utils/blockchain");
+const pinataSDK = require("@pinata/sdk");
 
+const pinata = new pinataSDK({ pinataJWTKey: process.env.PINATA_JWT });
 const PAYOS_API_URL = 'https://api-merchant.payos.vn/v2/payment-requests';
 
+/**
+ * 🧾 Tạo yêu cầu thanh toán PayOS
+ */
 exports.createPayment = async (req, res) => {
   try {
     const { eventId, tickets, description, buyerName, buyerPhone, buyerEmail } = req.body;
@@ -20,7 +24,7 @@ exports.createPayment = async (req, res) => {
     const event = await Event.findById(eventId);
     if (!event) return res.status(404).json({ message: 'Event không tồn tại' });
 
-    // Tính tổng tiền & chuẩn hóa tickets
+    // 🧮 Tính tổng tiền & chuẩn hóa vé
     let totalAmount = 0;
     const ticketsDetails = [];
     tickets.forEach(t => {
@@ -37,21 +41,19 @@ exports.createPayment = async (req, res) => {
       return res.status(400).json({ message: 'Không có vé hợp lệ' });
     }
 
-// Sinh orderId tự động
-const orderId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-
-// Tạo orderCode để gửi PayOS
-const orderCode = Date.now(); // hoặc Number(Date.now())
+    // 🔢 Sinh orderId & orderCode TRÙNG NHAU (để frontend & webhook đồng nhất)
+    const orderId = Date.now().toString(); // dùng timestamp cho dễ đọc
+    const orderCode = Number(orderId);
 
     const shortDescription = (description || `Thanh toán ${orderId}`).slice(0, 25);
 
-    // Gửi request đến PayOS
+    // 🧾 Dữ liệu gửi PayOS
     const dataForSignature = {
-      orderCode: Number(Date.now()),
+      orderCode,
       amount: totalAmount,
       description: shortDescription,
-  cancelUrl: process.env.FRONTEND_URL + '/payment-failed',
-  returnUrl: process.env.FRONTEND_URL + '/payment-success?orderCode=' + orderCode
+      cancelUrl: `${process.env.FRONTEND_URL}/payment-failed`,
+      returnUrl: `${process.env.FRONTEND_URL}/payment-success?orderCode=${orderCode}`
     };
 
     const signature = generateSignature(dataForSignature, process.env.PAYOS_CHECKSUM_KEY);
@@ -70,10 +72,11 @@ const orderCode = Date.now(); // hoặc Number(Date.now())
       'Content-Type': 'application/json'
     };
 
+    // 🚀 Gửi request tạo thanh toán
     const response = await axios.post(PAYOS_API_URL, payload, { headers });
     const respData = response.data;
 
-    // Lưu đơn hàng
+    // 💾 Lưu đơn hàng vào DB
     const order = await Order.findOneAndUpdate(
       { orderId },
       {
@@ -87,22 +90,21 @@ const orderCode = Date.now(); // hoặc Number(Date.now())
       { upsert: true, new: true }
     );
 
-    // Trả về payUrl và order, bỏ QR base64
     return res.status(201).json({
       success: true,
       payUrl: respData?.data?.checkoutUrl || respData?.data?.qrCode,
       order,
       payosResponse: respData
     });
-
   } catch (err) {
-    console.error('createPayment error:', err.response?.data || err.message || err);
+    console.error('❌ createPayment error:', err.response?.data || err.message || err);
     res.status(500).json({ success: false, error: err.response?.data || err.message });
   }
 };
 
-
-// Webhook endpoint: nhận body { code, desc, success, data, signature }
+/**
+ * 🔔 Webhook PayOS gọi khi giao dịch hoàn tất
+ */
 exports.payosWebhook = async (req, res) => {
   try {
     const body = req.body;
@@ -111,42 +113,62 @@ exports.payosWebhook = async (req, res) => {
     const { data, signature: receivedSignature } = body;
     if (!data) return res.status(400).send('Missing data');
 
-    // compute signature from data
     const computedSignature = generateSignature(data, process.env.PAYOS_CHECKSUM_KEY);
-
-    // debug logs (bỏ hoặc giữ tuỳ bạn)
-    console.log('PayOS webhook received. computedSignature=', computedSignature, 'received=', receivedSignature);
+    console.log('📩 PayOS webhook:', { computedSignature, receivedSignature, data });
 
     if (computedSignature !== receivedSignature) {
       console.error('❌ Invalid signature');
-      // trả 400 để PayOS biết, và dashboard sẽ hiển thị lỗi "Invalid signature"
       return res.status(400).send('Invalid signature');
     }
 
-    // Xử lý dữ liệu thực tế
-    // Theo sample data.orderCode, data.status, data.amount
-    const orderCode = data.orderCode || data.orderId || data.orderCode;
+    const orderCode = data.orderCode?.toString();
     const statusFromPayos = (data.status || data.code || '').toString().toUpperCase();
 
-    // Tìm order trong db: Order.orderId == orderCode
-    const order = await Order.findOne({ orderId: String(orderCode) });
+    const order = await Order.findOne({ orderId: orderCode });
     if (!order) {
-      console.warn('Order not found for orderCode=', orderCode);
-      // trả 200 hay 404? mình trả 200 OK để PayOS không retry forever, nhưng log cảnh báo
+      console.warn('⚠️ Order not found for orderCode=', orderCode);
       return res.status(200).send('Order not found');
     }
 
-    // map trạng thái
-    if (statusFromPayos === 'PAID' || statusFromPayos === 'SUCCESS' || statusFromPayos === '00') {
+    // 🟢 Nếu PayOS báo thanh toán thành công
+    if (['PAID', 'SUCCESS', '00'].includes(statusFromPayos)) {
       order.status = 'paid';
-    } else if (statusFromPayos === 'CANCELED' || statusFromPayos === 'FAILED') {
-      order.status = 'failed';
-    } else {
-      // giữ nguyên / pending
-    }
-    await order.save();
+      await order.save();
 
-    console.log(`✅ Webhook processed for order ${order.orderId}. new status=${order.status}`);
+      // 🪙 Mint vé NFT
+      const event = await Event.findById(order.eventId);
+      if (!event) return res.status(200).send('Event not found for NFT mint');
+
+      for (const ticket of order.tickets) {
+        const metadata = {
+          name: `${event.name} - ${ticket.zone} - ${ticket.seat}`,
+          description: `Vé NFT cho sự kiện ${event.name}`,
+          image: event.coverImage ? `${process.env.BACKEND_URL}${event.coverImage}` : '',
+          attributes: [
+            { trait_type: 'Zone', value: ticket.zone },
+            { trait_type: 'Seat', value: ticket.seat },
+            { trait_type: 'Price', value: ticket.price }
+          ]
+        };
+
+        const pinRes = await pinata.pinJSONToIPFS(metadata);
+        const metadataURI = `https://gateway.pinata.cloud/ipfs/${pinRes.IpfsHash}`;
+
+        const buyerWallet = process.env.DEFAULT_BUYER_WALLET;
+        await mintTicket(
+          buyerWallet,
+          event.name,
+          ticket.zone,
+          ticket.seat,
+          ticket.price,
+          metadataURI
+        );
+      }
+
+      console.log(`✅ Vé NFT đã được mint cho order ${order.orderId}`);
+    }
+
+    console.log(`✅ Webhook processed for ${order.orderId} → ${order.status}`);
     return res.status(200).send('OK');
   } catch (err) {
     console.error('payosWebhook error:', err);
@@ -154,14 +176,19 @@ exports.payosWebhook = async (req, res) => {
   }
 };
 
+/**
+ * 🔍 Lấy trạng thái đơn hàng
+ */
 exports.getOrderStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
     const order = await Order.findOne({ orderId });
-    if (!order) return res.status(404).json({ success: false, message: 'Not found' });
+    if (!order)
+      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng' });
+
     return res.json({ success: true, status: order.status, order });
   } catch (err) {
-    console.error(err);
+    console.error('getOrderStatus error:', err);
     res.status(500).json({ success: false });
   }
 };
