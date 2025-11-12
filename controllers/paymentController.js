@@ -1,13 +1,9 @@
 require('dotenv').config();
 const axios = require('axios');
-const crypto = require('crypto');
 const Order = require('../models/Order');
-const { generateSignature } = require('../utils/payosUtils');
 const Event = require('../models/Event');
-const { mintTicket } = require("../utils/blockchain");
-const pinataSDK = require("@pinata/sdk");
+const { generateSignature } = require('../utils/payosUtils');
 
-const pinata = new pinataSDK({ pinataJWTKey: process.env.PINATA_JWT });
 const PAYOS_API_URL = 'https://api-merchant.payos.vn/v2/payment-requests';
 
 /**
@@ -41,13 +37,12 @@ exports.createPayment = async (req, res) => {
       return res.status(400).json({ message: 'Không có vé hợp lệ' });
     }
 
-    // 🔢 Sinh orderId & orderCode TRÙNG NHAU (để frontend & webhook đồng nhất)
-    const orderId = Date.now().toString(); // dùng timestamp cho dễ đọc
+    // 🔢 Sinh orderId & orderCode trùng nhau (dễ đối chiếu)
+    const orderId = Date.now().toString();
     const orderCode = Number(orderId);
-
     const shortDescription = (description || `Thanh toán ${orderId}`).slice(0, 25);
 
-    // 🧾 Dữ liệu gửi PayOS
+    // 🧾 Chuẩn bị dữ liệu gửi PayOS
     const dataForSignature = {
       orderCode,
       amount: totalAmount,
@@ -72,7 +67,7 @@ exports.createPayment = async (req, res) => {
       'Content-Type': 'application/json'
     };
 
-    // 🚀 Gửi request tạo thanh toán
+    // 🚀 Gửi request đến PayOS
     const response = await axios.post(PAYOS_API_URL, payload, { headers });
     const respData = response.data;
 
@@ -103,7 +98,7 @@ exports.createPayment = async (req, res) => {
 };
 
 /**
- * 🔔 Webhook PayOS gọi khi giao dịch hoàn tất
+ * 🔔 Webhook PayOS (gọi khi giao dịch hoàn tất)
  */
 exports.payosWebhook = async (req, res) => {
   try {
@@ -130,42 +125,11 @@ exports.payosWebhook = async (req, res) => {
       return res.status(200).send('Order not found');
     }
 
-    // 🟢 Nếu PayOS báo thanh toán thành công
+    // 🟢 Nếu thanh toán thành công
     if (['PAID', 'SUCCESS', '00'].includes(statusFromPayos)) {
       order.status = 'paid';
       await order.save();
-
-      // 🪙 Mint vé NFT
-      const event = await Event.findById(order.eventId);
-      if (!event) return res.status(200).send('Event not found for NFT mint');
-
-      for (const ticket of order.tickets) {
-        const metadata = {
-          name: `${event.name} - ${ticket.zone} - ${ticket.seat}`,
-          description: `Vé NFT cho sự kiện ${event.name}`,
-          image: event.coverImage ? `${process.env.BACKEND_URL}${event.coverImage}` : '',
-          attributes: [
-            { trait_type: 'Zone', value: ticket.zone },
-            { trait_type: 'Seat', value: ticket.seat },
-            { trait_type: 'Price', value: ticket.price }
-          ]
-        };
-
-        const pinRes = await pinata.pinJSONToIPFS(metadata);
-        const metadataURI = `https://gateway.pinata.cloud/ipfs/${pinRes.IpfsHash}`;
-
-        const buyerWallet = process.env.DEFAULT_BUYER_WALLET;
-        await mintTicket(
-          buyerWallet,
-          event.name,
-          ticket.zone,
-          ticket.seat,
-          ticket.price,
-          metadataURI
-        );
-      }
-
-      console.log(`✅ Vé NFT đã được mint cho order ${order.orderId}`);
+      console.log(`✅ Đơn hàng ${order.orderId} đã thanh toán thành công`);
     }
 
     console.log(`✅ Webhook processed for ${order.orderId} → ${order.status}`);
