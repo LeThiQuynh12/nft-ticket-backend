@@ -26,7 +26,11 @@ app.use(helmet({
 
 app.use(
   cors({
-    origin: "https://nft-ticket-frontend-6pn6-deply.vercel.app", // domain frontend
+      origin: [
+    'https://nft-ticket-frontend-6pn6-deply.vercel.app',
+    'https://ticketqq.online'  
+  ],
+    
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true, // nếu bạn dùng cookie/token
   })
