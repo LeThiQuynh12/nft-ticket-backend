@@ -8,12 +8,13 @@ if (process.env.NODE_ENV === "development" || process.env.DISABLE_RATE_LIMIT ===
   globalLimiter = (req, res, next) => next();
   authLimiter = (req, res, next) => next();
 } else {
-  globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 phút
-    max: 100, // giới hạn request/IP
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
+globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500, // tăng từ 100 lên 500 request/15 phút
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 
   // stricter cho auth
   authLimiter = rateLimit({

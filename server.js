@@ -28,7 +28,8 @@ app.use(
   cors({
       origin: [
     'https://nft-ticket-frontend-6pn6-deply.vercel.app',
-    'https://ticketqq.online'  
+    'https://ticketqq.online',  
+    'http://localhost:5173'
   ],
     
     methods: ["GET", "POST", "PUT", "DELETE"],
