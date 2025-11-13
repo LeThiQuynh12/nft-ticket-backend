@@ -1,3 +1,6 @@
+const ethers = require('ethers');
+const contract = require('../blockchain/connectNFT.js'); 
+
 require('dotenv').config();
 const axios = require('axios');
 const Order = require('../models/Order');
@@ -109,10 +112,8 @@ exports.payosWebhook = async (req, res) => {
     if (!data) return res.status(400).send('Missing data');
 
     const computedSignature = generateSignature(data, process.env.PAYOS_CHECKSUM_KEY);
-    console.log('📩 PayOS webhook:', { computedSignature, receivedSignature, data });
 
     if (computedSignature !== receivedSignature) {
-      console.error('❌ Invalid signature');
       return res.status(400).send('Invalid signature');
     }
 
@@ -120,26 +121,36 @@ exports.payosWebhook = async (req, res) => {
     const statusFromPayos = (data.status || data.code || '').toString().toUpperCase();
 
     const order = await Order.findOne({ orderId: orderCode });
-    if (!order) {
-      console.warn('⚠️ Order not found for orderCode=', orderCode);
-      return res.status(200).send('Order not found');
-    }
+    if (!order) return res.status(200).send('Order not found');
 
-    // 🟢 Nếu thanh toán thành công
     if (['PAID', 'SUCCESS', '00'].includes(statusFromPayos)) {
       order.status = 'paid';
       await order.save();
-      console.log(`✅ Đơn hàng ${order.orderId} đã thanh toán thành công`);
+
+      // --- MINT NFT CHO MỖI VÉ ---
+      for (let ticket of order.tickets) {
+        try {
+          const tokenId = await contract.mintTicket(
+            order.customer.walletAddress || order.customer.email, // địa chỉ nhận NFT, thay email bằng address nếu có
+            ticket.ticketType,  // eventName có thể lấy từ ticketType
+            ticket.zone,
+            ticket.seat,
+            ethers.parseEther(ticket.price.toString()), // convert sang wei
+            ticket.metadataURI || "ipfs://defaultMetadata" // nếu có IPFS metadata
+          );
+          console.log(`✅ Minted NFT tokenId: ${tokenId}`);
+        } catch (err) {
+          console.error("❌ Error minting NFT:", err);
+        }
+      }
     }
 
-    console.log(`✅ Webhook processed for ${order.orderId} → ${order.status}`);
     return res.status(200).send('OK');
   } catch (err) {
     console.error('payosWebhook error:', err);
     return res.status(500).send('ERROR');
   }
 };
-
 /**
  * 🔍 Lấy trạng thái đơn hàng
  */
