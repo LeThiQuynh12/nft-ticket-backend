@@ -19,23 +19,25 @@ connectDB();
 
 const app = express();
 
-// ================== ⚙️ Middleware ==================
+
 app.use(helmet({
-  crossOriginResourcePolicy: false, // 🟢 Cho phép load ảnh từ domain khác
+  crossOriginResourcePolicy: false, 
 }));
 
-app.use(cors({
-  origin: ["http://localhost:5173"], // 🟢 Domain frontend (Vite)
-  credentials: true,
-}));
-
+app.use(
+  cors({
+    origin: "https://nft-ticket-frontend-6pn6-deply.vercel.app", // domain frontend
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true, // nếu bạn dùng cookie/token
+  })
+);
 app.use(globalLimiter);
 app.use(express.json({ limit: "10mb" }));
 
-// ================== 🖼️ Cho phép truy cập ảnh upload ==================
+
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// ================== 🚀 Routes ==================
+
 app.use("/api/auth", authRoutes);
 app.use("/api/events", eventRoutes);
 app.use("/api/categories", categoryRoutes);
@@ -44,10 +46,9 @@ app.use("/api/users", userRoutes);
 app.use("/api/payments", paymentRoutes);
 app.get("/", (req, res) => res.send("🎫 LuxGo Event Ticket Backend API is running"));
 
-// ================== ⚠️ Error handler ==================
+
 app.use(errorHandler);
 
-// ================== 🟢 Start server ==================
 const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
