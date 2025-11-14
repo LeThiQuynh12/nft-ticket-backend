@@ -23,19 +23,23 @@ const app = express();
 app.use(helmet({
   crossOriginResourcePolicy: false, 
 }));
+app.use(cors({
+  origin: function (origin, callback) {
+    const whitelist = [
+      'https://nft-ticket-frontend-6pn6-deply.vercel.app',
+      'https://ticketqq.online',
+      'http://localhost:5173'
+    ];
+    if (!origin || whitelist.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE"]
+}));
 
-app.use(
-  cors({
-      origin: [
-    'https://nft-ticket-frontend-6pn6-deply.vercel.app',
-    'https://ticketqq.online',  
-    'http://localhost:5173'
-  ],
-    
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true, // nếu bạn dùng cookie/token
-  })
-);
 app.use(globalLimiter);
 app.use(express.json({ limit: "10mb" }));
 
