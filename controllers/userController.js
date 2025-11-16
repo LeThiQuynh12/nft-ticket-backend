@@ -1,6 +1,5 @@
 const User = require("../models/User");
 
-// ✅ Lấy tất cả user
 exports.getAllUsers = async (req, res) => {
   try {
     const users = await User.find().select("-password -refreshToken");
@@ -10,7 +9,6 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-// ✅ Cập nhật role user
 exports.updateUserRole = async (req, res) => {
   try {
     const { role } = req.body;
@@ -30,7 +28,6 @@ exports.updateUserRole = async (req, res) => {
   }
 };
 
-// ✅ Khoá tài khoản user (1 năm)
 exports.lockUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -45,7 +42,6 @@ exports.lockUser = async (req, res) => {
   }
 };
 
-// ✅ Mở khoá
 exports.unlockUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
@@ -61,7 +57,7 @@ exports.unlockUser = async (req, res) => {
   }
 };
 
-// ✅ Xoá user
+
 exports.deleteUser = async (req, res) => {
   try {
     await User.findByIdAndDelete(req.params.id);

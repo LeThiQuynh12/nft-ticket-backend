@@ -1,21 +1,18 @@
 const Event = require("../models/Event");
 const slugify = require("slugify");
-const { mapLocationName } = require('../utils/locationHelper'); // import helper
+const { mapLocationName } = require("../utils/locationHelper");
 
-// 🧩 Tạo sự kiện mới
 exports.createEvent = async (req, res, next) => {
   try {
     const payload = req.body;
-    payload.createdBy = req.user?.id; // đảm bảo có user đăng nhập
+    payload.createdBy = req.user?.id;
 
-    // 🧩 Sinh slug tự động (vd: dem-nhac-hoi-abc-1a2b)
     payload.slug =
       payload.slug ||
       slugify(payload.name || "event", { lower: true, strict: true }) +
         "-" +
         Date.now().toString(36).slice(-4);
 
-    // 🖼️ Xử lý file upload
     if (req.files?.coverImage?.[0])
       payload.coverImage = `/uploads/${req.files.coverImage[0].filename}`;
 
@@ -31,7 +28,6 @@ exports.createEvent = async (req, res, next) => {
       payload.organizerLogo = `/uploads/${req.files.organizerLogo[0].filename}`;
     }
 
-    // 🎫 Parse danh sách vé (ticketTypes)
     if (payload.ticketTypes && typeof payload.ticketTypes === "string") {
       try {
         payload.ticketTypes = JSON.parse(payload.ticketTypes);
@@ -40,33 +36,28 @@ exports.createEvent = async (req, res, next) => {
       }
     }
 
-  
-
-    // 📍 Parse location JSON
-if (payload.location && typeof payload.location === "string") {
-  try {
-    payload.location = JSON.parse(payload.location);
-  } catch {
-    return res.status(400).json({ message: "Invalid location JSON" });
-  }
-}
+    if (payload.location && typeof payload.location === "string") {
+      try {
+        payload.location = JSON.parse(payload.location);
+      } catch {
+        return res.status(400).json({ message: "Invalid location JSON" });
+      }
+    }
 
     const event = await Event.create(payload);
     res.status(201).json({ message: "Event created successfully", event });
   } catch (err) {
-    console.error("❌ Create Event Error:", err);
+    console.error("Create Event Error:", err);
     next(err);
   }
 };
 
-// 🧩 Cập nhật sự kiện
 exports.updateEvent = async (req, res, next) => {
   try {
     const { id } = req.params;
     const payload = req.body;
     payload.updatedAt = Date.now();
 
-    // 🖼️ Cập nhật file mới nếu có
     if (req.files?.coverImage?.[0])
       payload.coverImage = `/uploads/${req.files.coverImage[0].filename}`;
 
@@ -79,7 +70,7 @@ exports.updateEvent = async (req, res, next) => {
     if (req.files?.organizerLogo?.[0]) {
       payload.organizerLogo = `/uploads/${req.files.organizerLogo[0].filename}`;
     }
-    // 🎫 Parse JSON cho ticketTypes & paymentInfo
+
     if (payload.ticketTypes && typeof payload.ticketTypes === "string") {
       try {
         payload.ticketTypes = JSON.parse(payload.ticketTypes);
@@ -88,15 +79,13 @@ exports.updateEvent = async (req, res, next) => {
       }
     }
 
-
-    // 📍 Parse location JSON
-if (payload.location && typeof payload.location === "string") {
-  try {
-    payload.location = JSON.parse(payload.location);
-  } catch {
-    return res.status(400).json({ message: "Invalid location JSON" });
-  }
-}
+    if (payload.location && typeof payload.location === "string") {
+      try {
+        payload.location = JSON.parse(payload.location);
+      } catch {
+        return res.status(400).json({ message: "Invalid location JSON" });
+      }
+    }
     const event = await Event.findByIdAndUpdate(id, payload, { new: true });
     if (!event) return res.status(404).json({ message: "Event not found" });
 
@@ -107,7 +96,6 @@ if (payload.location && typeof payload.location === "string") {
   }
 };
 
-// 🧩 Xóa sự kiện
 exports.deleteEvent = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -119,8 +107,6 @@ exports.deleteEvent = async (req, res, next) => {
   }
 };
 
-// 🧩 Lấy danh sách sự kiện (public)
-// 🧩 Lấy danh sách sự kiện (public)
 exports.getEvents = async (req, res, next) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -131,19 +117,16 @@ exports.getEvents = async (req, res, next) => {
     const includePrivate = req.query.includePrivate === "true";
     if (includePrivate && req.user?.role === "admin") filter = {};
 
-    // 🧩 Lọc theo category slug (VD: ?category=ca-nhac)
     if (req.query.category) {
       const Category = require("../models/Category");
       const categoryDoc = await Category.findOne({ slug: req.query.category });
       if (categoryDoc) {
         filter.category = categoryDoc._id;
       } else {
-        // Không có danh mục này thì trả về rỗng luôn
         return res.json({ events: [], meta: { total: 0, page, limit } });
       }
     }
 
-    // 🧩 Các filter khác
     if (req.query.q) filter.name = new RegExp(req.query.q, "i");
     if (req.query.mode) filter.mode = req.query.mode;
 
@@ -154,7 +137,6 @@ exports.getEvents = async (req, res, next) => {
       .skip(skip)
       .limit(limit);
 
-    // 🗺️ Map location đẹp
     const eventsWithLocationName = events.map((e) => {
       const obj = e.toObject();
       obj.location = mapLocationName(obj.location);
@@ -163,14 +145,11 @@ exports.getEvents = async (req, res, next) => {
 
     res.json({ events: eventsWithLocationName, meta: { total, page, limit } });
   } catch (err) {
-    console.error("❌ Get Events Error:", err);
+    console.error("Get Events Error:", err);
     next(err);
   }
 };
 
-
-
-// 🧩 Lấy chi tiết sự kiện
 exports.getEventById = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -181,7 +160,8 @@ exports.getEventById = async (req, res, next) => {
       if (!req.user) return res.status(403).json({ message: "Forbidden" });
       const isAdmin = req.user.role === "admin";
       const isCreator = req.user.id === String(event.createdBy);
-      if (!isAdmin && !isCreator) return res.status(403).json({ message: "Forbidden" });
+      if (!isAdmin && !isCreator)
+        return res.status(403).json({ message: "Forbidden" });
     }
 
     const eventObj = event.toObject();
@@ -189,7 +169,7 @@ exports.getEventById = async (req, res, next) => {
 
     res.json({ event: eventObj });
   } catch (err) {
-    console.error("❌ Get Event Error:", err);
+    console.error("Get Event Error:", err);
     next(err);
   }
 };

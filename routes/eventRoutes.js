@@ -5,13 +5,11 @@ const { protect, adminOnly } = require("../middleware/authMiddleware");
 const upload = require("../middleware/uploadMiddleware");
 const optionalAuth = require('../middleware/optionalAuthMiddleware');
 
-// 🧩 Lấy danh sách sự kiện (public)
 router.get("/", optionalAuth, evt.getEvents);
 
-// 🧩 Lấy chi tiết sự kiện (public hoặc private tuỳ quyền)
+
 router.get("/:id", evt.getEventById);
 
-// 🧩 Tạo sự kiện mới (Admin)
 router.post(
   "/",
   protect,
@@ -25,7 +23,6 @@ router.post(
   evt.createEvent
 );
 
-// 🧩 Cập nhật sự kiện (Admin)
 router.put(
   "/:id",
   protect,
@@ -39,7 +36,6 @@ router.put(
   evt.updateEvent
 );
 
-// 🧩 Xóa sự kiện (Admin)
 router.delete("/:id", protect, adminOnly, evt.deleteEvent);
 
 module.exports = router;

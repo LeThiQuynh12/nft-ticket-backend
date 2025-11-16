@@ -1,6 +1,5 @@
 const mongoose = require("mongoose");
 
-// 🎟️ Schema vé
 const TicketTypeSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true, default: 0 },
@@ -9,49 +8,32 @@ const TicketTypeSchema = new mongoose.Schema({
   maxPerOrder: { type: Number, default: 10 },
 });
 
-// 📍 Schema địa điểm
 const LocationSchema = new mongoose.Schema({
-  name: { type: String, trim: true },          // Tên địa điểm
+  name: { type: String, trim: true },
   province: { type: String, trim: true },
   district: { type: String, trim: true },
   ward: { type: String, trim: true },
   addressDetail: { type: String, trim: true },
-}, { _id: false }); // không cần id con
+}, { _id: false });
 
 const EventSchema = new mongoose.Schema({
-  // 🔹 Thông tin cơ bản
   name: { type: String, required: true, trim: true },
   slug: { type: String, required: true, unique: true },
   description: { type: String, required: true },
   mode: { type: String, enum: ["offline", "online"], default: "offline" },
-
-  // 📍 Địa điểm
   location: LocationSchema,
-
   organizer: { type: String },
   category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
   startAt: { type: Date },
   endAt: { type: Date },
-
-  // 🖼️ Hình ảnh
   coverImage: { type: String },
   gallery: [String],
   seatMapUrl: { type: String },
   organizerLogo: { type: String },
-
-  // 🎫 Loại vé
   ticketTypes: [TicketTypeSchema],
-
-  // 🔐 Quyền riêng tư
   privacy: { type: String, enum: ["public", "private"], default: "public" },
-
-  // 💬 Tin nhắn xác nhận
   confirmationMessage: { type: String, maxlength: 500 },
-
-
-  // 🧍‍♂️ Người tạo
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date },
 });

@@ -6,22 +6,19 @@ const {
 } = require("../utils/tokenUtils");
 const verifyCaptcha = require("../utils/verifyCaptcha");
 const sendEmail = require("../utils/sendEmail"); 
-// 🔹 Đăng ký
+
 exports.registerUser = async (req, res, next) => {
   try {
     console.log("Goi dang ky")
     const { name, email, password, adminKey, captchaToken } = req.body;
-
-    // ✅ Kiểm tra Captcha
+   
     const isCaptchaValid = await verifyCaptcha(captchaToken, req.ip);
     if (!isCaptchaValid)
       return res.status(400).json({ message: "Xác minh Captcha thất bại" });
-
-    // ✅ Kiểm tra email
+  
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ message: "Email đã tồn tại" });
 
-    // ✅ Kiểm tra quyền admin
     let role = "user";
     if (adminKey && adminKey === process.env.ADMIN_SECRET_KEY) {
       role = "admin";
@@ -29,7 +26,6 @@ exports.registerUser = async (req, res, next) => {
 
     const user = await User.create({ name, email, password, role });
 
-    // 🔹 Gửi email xác nhận
     const subject = "🎉 Chào mừng bạn đến với LuxGo!";
     const html = `
       <h1>Xin chào ${name}</h1>
@@ -48,12 +44,10 @@ exports.registerUser = async (req, res, next) => {
 };
 
 
-// 🔹 Đăng nhập
 exports.loginUser = async (req, res, next) => {
   try {
     const { email, password, captchaToken } = req.body;
 
-    // ✅ Kiểm tra Captcha
     const isCaptchaValid = await verifyCaptcha(captchaToken);
     if (!isCaptchaValid)
       return res.status(400).json({ message: "Xác minh Captcha thất bại" });
@@ -83,7 +77,6 @@ exports.loginUser = async (req, res, next) => {
   }
 };
 
-// 🔹 Làm mới token
 exports.refreshToken = async (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken)
@@ -105,7 +98,6 @@ exports.refreshToken = async (req, res) => {
   }
 };
 
-// 🔹 Đăng xuất
 exports.logoutUser = async (req, res) => {
   try {
     const { refreshToken } = req.body;
@@ -114,7 +106,7 @@ exports.logoutUser = async (req, res) => {
 
     const user = await User.findOne({ refreshToken });
     if (user) {
-      user.refreshToken = null; // xóa refresh token khỏi DB
+      user.refreshToken = null; 
       await user.save();
     }
 

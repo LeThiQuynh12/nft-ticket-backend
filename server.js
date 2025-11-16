@@ -53,12 +53,12 @@ app.use("/api/categories", categoryRoutes);
 app.use("/api/locations", locationRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/payments", paymentRoutes);
-app.get("/", (req, res) => res.send("🎫 LuxGo Event Ticket Backend API is running"));
+app.get("/", (req, res) => res.send("Event Ticket Backend API is running"));
 
 
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5003;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`Server running on http://localhost:${PORT}`);
 });

@@ -9,7 +9,6 @@ const {
   deleteUser,
 } = require("../controllers/userController");
 
-// ✅ Chỉ admin truy cập
 router.get("/", protect, adminOnly, getAllUsers);
 router.put("/:id/role", protect, adminOnly, updateUserRole);
 router.put("/:id/lock", protect, adminOnly, lockUser);

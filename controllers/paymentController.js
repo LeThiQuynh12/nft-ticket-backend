@@ -1,169 +1,264 @@
-const ethers = require('ethers');
-const contract = require('../blockchain/connectNFT.js'); 
+const ethers = require("ethers");
+const {contract, mintTicket } = require("../blockchain/connectNFT.js");
+require("dotenv").config();
+const axios = require("axios");
+const Order = require("../models/Order");
+const Event = require("../models/Event");
+const { generateSignature } = require("../utils/payosUtils");
+const {
+  createMetadata,
+  uploadMetadataToPinata,
+} = require("../utils/pinataUtils");
+const PAYOS_API_URL = "https://api-merchant.payos.vn/v2/payment-requests";
 
-require('dotenv').config();
-const axios = require('axios');
-const Order = require('../models/Order');
-const Event = require('../models/Event');
-const { generateSignature } = require('../utils/payosUtils');
-
-const PAYOS_API_URL = 'https://api-merchant.payos.vn/v2/payment-requests';
-
-/**
- * 🧾 Tạo yêu cầu thanh toán PayOS
- */
-exports.createPayment = async (req, res) => {
+const createPayment = async (req, res) => {
   try {
-    const { eventId, tickets, description, buyerName, buyerPhone, buyerEmail } = req.body;
+    const { eventId, tickets, description, buyerName, buyerPhone, buyerEmail } =
+      req.body;
+    const user = req.user; // user từ authMiddleware
 
-    if (!eventId || !tickets || !tickets.length) {
-      return res.status(400).json({ message: 'eventId và tickets bắt buộc' });
+    if (!eventId || !tickets?.length) {
+      return res.status(400).json({ message: "eventId và tickets bắt buộc" });
     }
 
     const event = await Event.findById(eventId);
-    if (!event) return res.status(404).json({ message: 'Event không tồn tại' });
+    if (!event) return res.status(404).json({ message: "Event không tồn tại" });
 
-    // 🧮 Tính tổng tiền & chuẩn hóa vé
     let totalAmount = 0;
     const ticketsDetails = [];
-    tickets.forEach(t => {
+    tickets.forEach((t) => {
       const typeObj = event.ticketTypes.find(
-        tt => tt.name.toLowerCase() === t.ticketType.toLowerCase()
+        (tt) => tt.name.toLowerCase() === t.ticketType.toLowerCase()
       );
       if (!typeObj) return;
       const price = typeObj.price;
       totalAmount += price;
-      ticketsDetails.push({ ticketType: t.ticketType, price, zone: t.zone, seat: t.seat });
+      ticketsDetails.push({
+        ticketType: t.ticketType,
+        price,
+        zone: t.zone,
+        seat: t.seat,
+      });
     });
 
     if (!ticketsDetails.length) {
-      return res.status(400).json({ message: 'Không có vé hợp lệ' });
+      return res.status(400).json({ message: "Không có vé hợp lệ" });
     }
 
-    // 🔢 Sinh orderId & orderCode trùng nhau (dễ đối chiếu)
     const orderId = Date.now().toString();
     const orderCode = Number(orderId);
-    const shortDescription = (description || `Thanh toán ${orderId}`).slice(0, 25);
+    const shortDescription = (description || `Thanh toán ${orderId}`).slice(
+      0,
+      25
+    );
 
-    // 🧾 Chuẩn bị dữ liệu gửi PayOS
     const dataForSignature = {
       orderCode,
       amount: totalAmount,
       description: shortDescription,
       cancelUrl: `${process.env.FRONTEND_URL}/payment-failed`,
-      returnUrl: `${process.env.FRONTEND_URL}/payment-success?orderCode=${orderCode}`
+      returnUrl: `${process.env.FRONTEND_URL}/payment-success?orderCode=${orderCode}`,
     };
 
-    const signature = generateSignature(dataForSignature, process.env.PAYOS_CHECKSUM_KEY);
-
+    const signature = generateSignature(
+      dataForSignature,
+      process.env.PAYOS_CHECKSUM_KEY
+    );
     const payload = {
       ...dataForSignature,
       buyerName,
       buyerPhone,
       buyerEmail,
-      signature
+      signature,
     };
-
     const headers = {
-      'x-client-id': process.env.PAYOS_CLIENT_ID,
-      'x-api-key': process.env.PAYOS_API_KEY,
-      'Content-Type': 'application/json'
+      "x-client-id": process.env.PAYOS_CLIENT_ID,
+      "x-api-key": process.env.PAYOS_API_KEY,
+      "Content-Type": "application/json",
     };
 
-    // 🚀 Gửi request đến PayOS
     const response = await axios.post(PAYOS_API_URL, payload, { headers });
     const respData = response.data;
 
-    // 💾 Lưu đơn hàng vào DB
     const order = await Order.findOneAndUpdate(
       { orderId },
       {
         eventId,
         tickets: ticketsDetails,
         totalAmount,
-        customer: { name: buyerName, phone: buyerPhone, email: buyerEmail },
+        customer: {
+          userId: user?._id,
+          name: buyerName,
+          phone: buyerPhone,
+          email: buyerEmail,
+          walletAddress: user?.walletAddress || null,
+        },
         paymentUrl: respData?.data?.checkoutUrl || respData?.data?.qrCode,
-        status: 'pending'
+        status: "pending",
+        nfts: [],
       },
       { upsert: true, new: true }
     );
 
-    return res.status(201).json({
-      success: true,
-      payUrl: respData?.data?.checkoutUrl || respData?.data?.qrCode,
-      order,
-      payosResponse: respData
-    });
+    return res
+      .status(201)
+      .json({ success: true, payUrl: order.paymentUrl, order });
   } catch (err) {
-    console.error('❌ createPayment error:', err.response?.data || err.message || err);
-    res.status(500).json({ success: false, error: err.response?.data || err.message });
+    console.error(
+      "createPayment error:",
+      err.response?.data || err.message || err
+    );
+    res
+      .status(500)
+      .json({ success: false, error: err.response?.data || err.message });
   }
 };
 
-/**
- * 🔔 Webhook PayOS (gọi khi giao dịch hoàn tất)
- */
-exports.payosWebhook = async (req, res) => {
+const payosWebhook = async (req, res) => {
   try {
-    const body = req.body;
-    if (!body || typeof body !== 'object') return res.status(400).send('Invalid body');
+    const { data, signature: receivedSignature } = req.body;
+    if (!data) return res.status(400).send("Missing data");
 
-    const { data, signature: receivedSignature } = body;
-    if (!data) return res.status(400).send('Missing data');
-
-    const computedSignature = generateSignature(data, process.env.PAYOS_CHECKSUM_KEY);
-
-    if (computedSignature !== receivedSignature) {
-      return res.status(400).send('Invalid signature');
-    }
+    // kiểm tra chữ ký webhook
+    const computedSignature = generateSignature(
+      data,
+      process.env.PAYOS_CHECKSUM_KEY
+    );
+    if (computedSignature !== receivedSignature)
+      return res.status(400).send("Invalid signature");
 
     const orderCode = data.orderCode?.toString();
-    const statusFromPayos = (data.status || data.code || '').toString().toUpperCase();
+    const statusFromPayos = (data.status || data.code || "")
+      .toString()
+      .toUpperCase();
 
     const order = await Order.findOne({ orderId: orderCode });
-    if (!order) return res.status(200).send('Order not found');
+    if (!order) return res.status(200).send("Order not found");
 
-    if (['PAID', 'SUCCESS', '00'].includes(statusFromPayos)) {
-      order.status = 'paid';
-      await order.save();
+    if (["PAID", "SUCCESS", "00"].includes(statusFromPayos)) {
+      order.status = "paid";
 
-      // --- MINT NFT CHO MỖI VÉ ---
       for (let ticket of order.tickets) {
         try {
-          const tokenId = await contract.mintTicket(
-            order.customer.walletAddress || order.customer.email, // địa chỉ nhận NFT, thay email bằng address nếu có
-            ticket.ticketType,  // eventName có thể lấy từ ticketType
+          // tạo metadata JSON
+          const metadata = createMetadata(ticket);
+          console.log("📄 Metadata JSON:", metadata);
+
+          const metadataURI = await uploadMetadataToPinata(metadata);
+          console.log("📌 Uploaded metadata URI:", metadataURI);
+
+          const recipient =
+            order.customer.walletAddress ||
+            process.env.CUSTODIAL_WALLET_ADDRESS;
+
+          // mint NFT
+          const { tx, tokenId } = await mintTicket(
+            recipient,
+            ticket.ticketType,
             ticket.zone,
             ticket.seat,
-            ethers.parseEther(ticket.price.toString()), // convert sang wei
-            ticket.metadataURI || "ipfs://defaultMetadata" // nếu có IPFS metadata
+            ethers.parseEther(ticket.price.toString()),
+            metadataURI
           );
-          console.log(`✅ Minted NFT tokenId: ${tokenId}`);
+
+          const txLink = `https://amoy.polygonscan.com/tx/${tx.hash}`;
+          console.log(`✅ Minted NFT tokenId: ${tokenId}, txLink: ${txLink}`);
+
+          // lưu vào order.nfts
+          order.nfts.push({
+            ticketType: ticket.ticketType,
+            tokenId,
+            metadataURI,
+            txLink,
+          });
         } catch (err) {
           console.error("❌ Error minting NFT:", err);
         }
       }
+
+      await order.save();
+      console.log("💾 Order updated with NFTs:", order.nfts);
     }
 
-    return res.status(200).send('OK');
+    return res.status(200).send("OK");
   } catch (err) {
-    console.error('payosWebhook error:', err);
-    return res.status(500).send('ERROR');
+    console.error("payosWebhook error:", err);
+    return res.status(500).send("ERROR");
   }
 };
-/**
- * 🔍 Lấy trạng thái đơn hàng
- */
-exports.getOrderStatus = async (req, res) => {
+
+
+const getOrderStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
     const order = await Order.findOne({ orderId });
     if (!order)
-      return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Không tìm thấy đơn hàng" });
 
     return res.json({ success: true, status: order.status, order });
   } catch (err) {
-    console.error('getOrderStatus error:', err);
+    console.error("getOrderStatus error:", err);
     res.status(500).json({ success: false });
   }
+};
+
+const getMyNFTs = async (req, res) => {
+  try {
+    const orders = await Order.find({
+      "customer.userId": req.user._id,
+      status: "paid",
+    });
+    const nfts = orders.flatMap((o) =>
+      o.nfts.map((n) => ({
+        ...n,
+        orderId: o.orderId,
+        eventId: o.eventId,
+        txLink: n.txLink, // link giao dịch
+      }))
+    );
+
+    res.json({ success: true, nfts });
+  } catch (err) {
+    console.error("getMyNFTs error:", err);
+    res.status(500).json({ success: false });
+  }
+};
+
+// Lấy tất cả NFT, chỉ dành cho admin
+const getAllNFTs = async (req, res) => {
+  try {
+    const orders = await Order.find({ status: "paid" });
+
+    const nfts = orders.flatMap((o) =>
+      o.nfts.map((n) => ({
+        ticketType: n.ticketType,
+        tokenId: n.tokenId,
+        metadataURI: n.metadataURI,
+        txLink: n.txLink || null,
+        orderId: o.orderId,
+        eventId: o.eventId,
+        customer: {
+          name: o.customer.name,
+          email: o.customer.email,
+          phone: o.customer.phone,
+          walletAddress: o.customer.walletAddress,
+        },
+      }))
+    );
+
+    res.json({ success: true, nfts });
+  } catch (err) {
+    console.error("getAllNFTs error:", err);
+    res.status(500).json({ success: false });
+  }
+};
+
+module.exports = {
+  createPayment,
+  payosWebhook,
+  getOrderStatus,
+  getMyNFTs,
+  getAllNFTs,
 };
