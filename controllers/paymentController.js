@@ -52,13 +52,19 @@ const createPayment = async (req, res) => {
       25
     );
 
-    const dataForSignature = {
-      orderCode,
-      amount: totalAmount,
-      description: shortDescription,
-      cancelUrl: `${process.env.FRONTEND_URL}/payment-failed`,
-      returnUrl: `${process.env.FRONTEND_URL}/payment-success?orderCode=${orderCode}`,
-    };
+const FRONTEND_URL =
+  process.env.NODE_ENV === "production"
+    ? process.env.FRONTEND_URL
+    : "http://localhost:5173";
+
+const dataForSignature = {
+  orderCode,
+  amount: totalAmount,
+  description: shortDescription,
+  cancelUrl: `${FRONTEND_URL}/payment-failed`,
+  returnUrl: `${FRONTEND_URL}/payment-success?orderCode=${orderCode}`,
+};
+
 
     const signature = generateSignature(
       dataForSignature,
