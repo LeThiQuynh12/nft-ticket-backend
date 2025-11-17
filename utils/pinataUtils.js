@@ -26,11 +26,14 @@ async function uploadMetadataToPinata(metadata) {
         }
       }
     );
-    return `${PINATA_GATEWAY_URL}${res.data.IpfsHash}`;
+
+    const cid = res.data.IpfsHash;
+    return `https://gateway.pinata.cloud/ipfs/${cid}`;
   } catch (err) {
     console.error("Upload metadata error:", err.response?.data || err.message);
     return null;
   }
 }
+
 
 module.exports = { createMetadata, uploadMetadataToPinata };
