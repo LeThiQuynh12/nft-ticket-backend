@@ -26,9 +26,7 @@ exports.createEvent = async (req, res, next) => {
         "-" +
         Date.now().toString(36).slice(-4);
 
-    // ======================
-    // UPLOAD CLOUDINARY
-    // ======================
+
     if (req.files?.coverImage?.[0]) {
       payload.coverImage = await uploadToCloudinary(
         req.files.coverImage[0].buffer,
@@ -58,7 +56,7 @@ exports.createEvent = async (req, res, next) => {
       );
     }
 
-    // Parse JSON fields
+
     if (payload.ticketTypes && typeof payload.ticketTypes === "string")
       payload.ticketTypes = JSON.parse(payload.ticketTypes);
 
@@ -80,7 +78,6 @@ exports.updateEvent = async (req, res, next) => {
     const payload = req.body;
     payload.updatedAt = Date.now();
 
-    // CLOUDINARY UPLOAD
     if (req.files?.coverImage?.[0]) {
       payload.coverImage = await uploadToCloudinary(
         req.files.coverImage[0].buffer,

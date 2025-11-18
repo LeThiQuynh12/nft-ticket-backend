@@ -1,3 +1,4 @@
+// controllers/authController.js
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 const {
@@ -5,61 +6,113 @@ const {
   generateRefreshToken,
 } = require("../utils/tokenUtils");
 const verifyCaptcha = require("../utils/verifyCaptcha");
-const sendEmail = require("../utils/sendEmail"); 
+const sendEmail = require("../utils/sendEmail");
+const generateOTP = require("../utils/generateOTP");
 
 exports.registerUser = async (req, res, next) => {
   try {
-    console.log("Goi dang ky")
-    const { name, email, password, adminKey, captchaToken } = req.body;
-   
-    const isCaptchaValid = await verifyCaptcha(captchaToken, req.ip);
+    const { name, email, password, captchaToken } = req.body;
+
+    // Check captcha
+    const isCaptchaValid = await verifyCaptcha(captchaToken);
     if (!isCaptchaValid)
       return res.status(400).json({ message: "Xác minh Captcha thất bại" });
-  
-    const existing = await User.findOne({ email });
-    if (existing) return res.status(400).json({ message: "Email đã tồn tại" });
 
-    let role = "user";
-    if (adminKey && adminKey === process.env.ADMIN_SECRET_KEY) {
-      role = "admin";
+    // Check user
+    let user = await User.findOne({ email });
+
+    const otp = generateOTP();
+    const otpExpires = Date.now() + 5 * 60 * 1000; // 5 phút
+
+    if (!user) {
+      // User mới chưa đăng ký
+      user = await User.create({
+        name,
+        email,
+        password,
+        otp,
+        otpExpires,
+        isVerified: false,
+        role: "user",
+      });
+    } else {
+      // User tồn tại nhưng chưa xác thực OTP → cập nhật lại OTP
+      user.name = name;
+      user.password = password;
+      user.otp = otp;
+      user.otpExpires = otpExpires;
+      user.isVerified = false;
+      await user.save();
     }
 
-    const user = await User.create({ name, email, password, role });
+    // Gửi email OTP
+    await sendEmail(
+      email,
+      "Mã OTP xác thực tài khoản tài khoản NFT Ticket của bạn",
+      `
+      <h2>Mã OTP để xác thực tài khoản của bạn:</h2>
+      <p style="font-size:22px; font-weight:bold">${otp}</p>
+      <p>Mã này chỉ có hiệu lực trong 5 phút. Vui lòng điền vào giao diện</p>
+      `
+    );
 
-    const subject = "🎉 Chào mừng bạn đến với LuxGo!";
-    const html = `
-      <h1>Xin chào ${name}</h1>
-      <p>Bạn đã đăng ký thành công tài khoản LuxGo với email <b>${email}</b>.</p>
-      <p>Chúc bạn có trải nghiệm tuyệt vời!</p>
-    `;
-    await sendEmail(email, subject, html);
-
-    res.status(201).json({
-      message: "Đăng ký thành công, email xác nhận đã được gửi",
-      user: { id: user._id, email: user.email, role: user.role },
-    });
+    res.json({ message: "OTP đã được gửi qua email", email });
   } catch (err) {
     next(err);
   }
 };
 
+exports.verifyOtp = async (req, res, next) => {
+  try {
+    const { email, otp } = req.body;
+
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy user" });
+
+    if (user.otp !== otp)
+      return res.status(400).json({ message: "OTP không đúng" });
+
+    if (user.otpExpires < Date.now())
+      return res.status(400).json({ message: "OTP đã hết hạn" });
+
+    // Xác thực thành công
+    user.otp = null;
+    user.otpExpires = null;
+    user.isVerified = true; //Quan trọng
+    await user.save();
+
+    res.json({ message: "Xác thực OTP thành công! Bạn có thể đăng nhập." });
+  } catch (err) {
+    next(err);
+  }
+};
 
 exports.loginUser = async (req, res, next) => {
   try {
     const { email, password, captchaToken } = req.body;
 
+    // Captcha
     const isCaptchaValid = await verifyCaptcha(captchaToken);
     if (!isCaptchaValid)
       return res.status(400).json({ message: "Xác minh Captcha thất bại" });
 
+    // Kiểm tra user
     const user = await User.findOne({ email });
-    if (!user)
-      return res.status(404).json({ message: "Người dùng không tồn tại" });
+    if (!user) return res.status(404).json({ message: "Không tồn tại user" });
 
+    // Không cho login nếu chưa xác thực OTP
+    // Bỏ OTP cho admin
+    if (user.role !== "admin" && !user.isVerified) {
+      return res.status(403).json({
+        message: "Tài khoản chưa được xác thực OTP. Vui lòng đăng ký lại.",
+      });
+    }
+
+    // Kiểm tra password
     const isMatch = await user.comparePassword(password);
-    if (!isMatch)
-      return res.status(401).json({ message: "Sai mật khẩu!" });
+    if (!isMatch) return res.status(401).json({ message: "Sai mật khẩu" });
 
+    // Tạo token
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
 
@@ -92,21 +145,21 @@ exports.refreshToken = async (req, res) => {
     const accessToken = generateAccessToken(user);
     res.json({ accessToken });
   } catch (err) {
-    res
-      .status(403)
-      .json({ message: "Refresh token không hợp lệ hoặc hết hạn" });
+    res.status(403).json({ message: "Refresh token không hợp lệ" });
   }
 };
 
 exports.logoutUser = async (req, res) => {
   try {
     const { refreshToken } = req.body;
+
     if (!refreshToken)
       return res.status(400).json({ message: "Thiếu refresh token" });
 
     const user = await User.findOne({ refreshToken });
+
     if (user) {
-      user.refreshToken = null; 
+      user.refreshToken = null;
       await user.save();
     }
 
