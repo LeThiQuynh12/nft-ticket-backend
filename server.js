@@ -14,9 +14,6 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const locationRoutes = require("./routes/locationRoutes");
 const userRoutes = require("./routes/userRouters");
 const paymentRoutes = require("./routes/paymentRoutes");
-
-const geetestRoutes = require("./routes/geetest");
-
 dotenv.config();
 connectDB();
 
@@ -58,7 +55,6 @@ app.use("/api/users", userRoutes);
 app.use("/api/payments", paymentRoutes);
 app.get("/", (req, res) => res.send("Event Ticket Backend API is running"));
 
-app.use("/api/geetest", geetestRoutes);
 
 app.use(errorHandler);
 
