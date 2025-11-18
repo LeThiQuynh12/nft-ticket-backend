@@ -4,6 +4,7 @@ require("dotenv").config();
 const axios = require("axios");
 const Order = require("../models/Order");
 const Event = require("../models/Event");
+const verifyGeetest = require("../utils/verifyGeetest");
 const { generateSignature } = require("../utils/payosUtils");
 const {
   createMetadata,
@@ -13,6 +14,23 @@ const PAYOS_API_URL = "https://api-merchant.payos.vn/v2/payment-requests";
 
 const createPayment = async (req, res) => {
   try {
+
+        const { geetest_challenge, geetest_validate, geetest_seccode } = req.body;
+    if (!geetest_challenge || !geetest_validate || !geetest_seccode) {
+      return res.status(400).json({ message: "Missing CAPTCHA params" });
+    }
+
+    const isCaptchaValid = await verifyGeetest({ 
+      geetest_challenge, 
+      geetest_validate, 
+      geetest_seccode 
+    });
+
+    if (!isCaptchaValid) {
+      return res.status(400).json({ message: "Xác minh CAPTCHA thất bại" });
+    }
+
+    
     const { eventId, tickets, description, buyerName, buyerPhone, buyerEmail } =
       req.body;
     const user = req.user; // user từ authMiddleware
