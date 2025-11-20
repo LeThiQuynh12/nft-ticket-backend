@@ -14,15 +14,31 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const locationRoutes = require("./routes/locationRoutes");
 const userRoutes = require("./routes/userRouters");
 const paymentRoutes = require("./routes/paymentRoutes");
+// const xssFilter = require("./middleware/xssFilter");
+const blockHtmlErrorPage = require("./middleware/blockAndRenderHtmlErrorPage");
 dotenv.config();
 connectDB();
 
 const app = express();
 
 
-app.use(helmet({
-  crossOriginResourcePolicy: false, 
-}));
+// CSP ngăn 99% XSS, kể cả khi hacker chèn được <script> → trình duyệt vẫn chặn.
+
+app.use(
+  helmet.contentSecurityPolicy({
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"], // nếu frontend cần inline
+      objectSrc: ["'none'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      connectSrc: ["'self'", "*"],
+      fontSrc: ["'self'", "data:"],
+      frameSrc: ["'self'"],
+    }
+  })
+);
+
 app.use(cors({
   origin: function (origin, callback) {
     const whitelist = [
@@ -42,8 +58,8 @@ app.use(cors({
 
 app.use(globalLimiter);
 app.use(express.json({ limit: "10mb" }));
-
-
+// app.use(xssFilter);
+app.use(blockHtmlErrorPage);
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 
