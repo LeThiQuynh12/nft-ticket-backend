@@ -1,10 +1,11 @@
 const ethers = require("ethers");
-const {contract, mintTicket } = require("../blockchain/connectNFT.js");
+const { contract, mintTicket } = require("../blockchain/connectNFT.js");
 require("dotenv").config();
 const axios = require("axios");
 const Order = require("../models/Order");
 const Event = require("../models/Event");
 const { generateSignature } = require("../utils/payosUtils");
+const QRCode = require("qrcode");
 const {
   createMetadata,
   uploadMetadataToPinata,
@@ -52,19 +53,18 @@ const createPayment = async (req, res) => {
       25
     );
 
-const FRONTEND_URL =
-  process.env.NODE_ENV === "production"
-    ? process.env.FRONTEND_URL
-    : "http://localhost:5173";
+    const FRONTEND_URL =
+      process.env.NODE_ENV === "production"
+        ? process.env.FRONTEND_URL
+        : "http://localhost:5173";
 
-const dataForSignature = {
-  orderCode,
-  amount: totalAmount,
-  description: shortDescription,
-  cancelUrl: `${FRONTEND_URL}/payment-failed`,
-  returnUrl: `${FRONTEND_URL}/payment-success?orderCode=${orderCode}`,
-};
-
+    const dataForSignature = {
+      orderCode,
+      amount: totalAmount,
+      description: shortDescription,
+      cancelUrl: `${FRONTEND_URL}/payment-failed`,
+      returnUrl: `${FRONTEND_URL}/payment-success?orderCode=${orderCode}`,
+    };
 
     const signature = generateSignature(
       dataForSignature,
@@ -120,6 +120,7 @@ const dataForSignature = {
   }
 };
 
+// gọi khi khách hàng thanh toán thành công
 const payosWebhook = async (req, res) => {
   try {
     const { data, signature: receivedSignature } = req.body;
@@ -144,14 +145,16 @@ const payosWebhook = async (req, res) => {
     if (["PAID", "SUCCESS", "00"].includes(statusFromPayos)) {
       order.status = "paid";
 
+      // Tạo vé khi thanh toán thành công
+
       for (let ticket of order.tickets) {
         try {
           // tạo metadata JSON
           const metadata = createMetadata(ticket);
-          console.log("📄 Metadata JSON:", metadata);
+          console.log("Metadata JSON:", metadata);
 
           const metadataURI = await uploadMetadataToPinata(metadata);
-          console.log("📌 Uploaded metadata URI:", metadataURI);
+          console.log("Uploaded metadata URI:", metadataURI);
 
           const recipient =
             order.customer.walletAddress ||
@@ -168,7 +171,7 @@ const payosWebhook = async (req, res) => {
           );
 
           const txLink = `https://amoy.polygonscan.com/tx/${tx.hash}`;
-          console.log(`✅ Minted NFT tokenId: ${tokenId}, txLink: ${txLink}`);
+          console.log(` Minted NFT tokenId: ${tokenId}, txLink: ${txLink}`);
 
           // lưu vào order.nfts
           order.nfts.push({
@@ -177,13 +180,26 @@ const payosWebhook = async (req, res) => {
             metadataURI,
             txLink,
           });
+
+
+          nft.qrCode = await QRCode.toDataURL(
+            JSON.stringify({
+              tokenId,
+              orderId: order.orderId,
+              eventId: order.eventId,
+              seat: ticket.seat,
+              ticketType: ticket.ticketType,
+            })
+          );
+
+          order.nfts.push(nft);
         } catch (err) {
-          console.error("❌ Error minting NFT:", err);
+          console.error("Error minting NFT:", err);
         }
       }
 
       await order.save();
-      console.log("💾 Order updated with NFTs:", order.nfts);
+      console.log("Order updated with NFTs:", order.nfts);
     }
 
     return res.status(200).send("OK");
@@ -192,7 +208,6 @@ const payosWebhook = async (req, res) => {
     return res.status(500).send("ERROR");
   }
 };
-
 
 const getOrderStatus = async (req, res) => {
   try {
@@ -216,12 +231,14 @@ const getMyNFTs = async (req, res) => {
       "customer.userId": req.user._id,
       status: "paid",
     });
+
     const nfts = orders.flatMap((o) =>
       o.nfts.map((n) => ({
         ...n,
         orderId: o.orderId,
         eventId: o.eventId,
-        txLink: n.txLink, // link giao dịch
+        txLink: n.txLink, 
+        qrCode: n.qrCode || null, 
       }))
     );
 
@@ -243,6 +260,7 @@ const getAllNFTs = async (req, res) => {
         tokenId: n.tokenId,
         metadataURI: n.metadataURI,
         txLink: n.txLink || null,
+        qrCode: n.qrCode || null, 
         orderId: o.orderId,
         eventId: o.eventId,
         customer: {

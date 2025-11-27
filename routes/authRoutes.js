@@ -1,4 +1,3 @@
-// routes/authRoutes.js
 const express = require("express");
 const router = express.Router();
 const {
@@ -9,6 +8,9 @@ const {
   verifyOtp,
 } = require("../controllers/authController");
 const { authLimiter } = require("../middleware/rateLimit");
+const logAuthRequests = require("../middleware/logAuth");
+
+router.use(logAuthRequests); // log tất cả request auth
 
 router.post("/register", authLimiter, registerUser);
 router.post("/verify-otp", verifyOtp); 

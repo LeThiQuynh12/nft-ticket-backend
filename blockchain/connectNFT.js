@@ -8,16 +8,6 @@ const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 const contractAddress = process.env.CONTRACT_ADDRESS;
 const contract = new ethers.Contract(contractAddress, NFTAbi, wallet);
 
-/**
- * Mint một vé NFT
- * @param {string} to - Địa chỉ ví nhận NFT
- * @param {string} ticketType
- * @param {string} zone
- * @param {string} seat
- * @param {BigNumber} price - ethers.parseEther(price.toString())
- * @param {string} metadataURI - IPFS link
- * @returns {string} tokenId
- */
 async function mintTicket(to, ticketType, zone, seat, price, metadataURI) {
   try {
     console.log("mintTicket called with:", { to, ticketType, zone, seat, price, metadataURI });
@@ -36,7 +26,7 @@ async function mintTicket(to, ticketType, zone, seat, price, metadataURI) {
     if (mintEvent) tokenId = mintEvent.args.tokenId.toString();
 
     if (!tokenId) {
-      // fallback decode logs
+
       const iface = new ethers.Interface(NFTAbi);
       for (let log of receipt.logs) {
         try {
@@ -46,7 +36,7 @@ async function mintTicket(to, ticketType, zone, seat, price, metadataURI) {
             break;
           }
         } catch (e) {
-          // không phải log này, skip
+       
         }
       }
     }

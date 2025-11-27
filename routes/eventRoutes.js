@@ -1,4 +1,3 @@
-// routes/eventRoutes.js
 const express = require("express");
 const router = express.Router();
 const evt = require("../controllers/eventController");
@@ -6,6 +5,10 @@ const { protect, adminOnly } = require("../middleware/authMiddleware");
 const upload = require("../middleware/uploadMiddleware");
 const optionalAuth = require("../middleware/optionalAuthMiddleware");
 const blockHtml = require("../middleware/blockAndRenderHtmlErrorPage");
+const logEventRequests = require("../middleware/logEvent"); // ← import
+
+// Middleware log tất cả request event
+router.use(logEventRequests);
 
 router.get("/", optionalAuth, evt.getEvents);
 router.get("/:id", evt.getEventById);
@@ -20,7 +23,7 @@ router.post(
     { name: "seatMap", maxCount: 1 },
     { name: "organizerLogo", maxCount: 1 },
   ]),
-  blockHtml,      // ← CHUYỂN SAU multer.fields()
+  blockHtml, // ← CHUYỂN SAU multer.fields()
   evt.createEvent
 );
 
@@ -34,7 +37,7 @@ router.put(
     { name: "seatMap", maxCount: 1 },
     { name: "organizerLogo", maxCount: 1 },
   ]),
-  blockHtml,      // ← CHUYỂN SAU multer.fields()
+  blockHtml,
   evt.updateEvent
 );
 
