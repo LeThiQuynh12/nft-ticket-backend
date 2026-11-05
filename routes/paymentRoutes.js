@@ -2,9 +2,8 @@ const express = require('express');
 const router = express.Router();
 const paymentController = require('../controllers/paymentController');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
-const logPaymentRequests = require('../middleware/logPayment'); // ← import middleware
+const logPaymentRequests = require('../middleware/logPayment');
 
-// Middleware log tất cả request payment
 router.use(logPaymentRequests);
 
 router.post('/create', protect, paymentController.createPayment);

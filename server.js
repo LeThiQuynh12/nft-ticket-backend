@@ -22,13 +22,11 @@ connectDB();
 const app = express();
 
 
-// CSP ngăn 99% XSS, kể cả khi hacker chèn được <script> → trình duyệt vẫn chặn.
-
 app.use(
   helmet.contentSecurityPolicy({
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"], // nếu frontend cần inline
+      scriptSrc: ["'self'", "'unsafe-inline'"], 
       objectSrc: ["'none'"],
       imgSrc: ["'self'", "data:", "blob:"],
       styleSrc: ["'self'", "'unsafe-inline'"],
