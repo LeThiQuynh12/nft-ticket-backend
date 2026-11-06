@@ -68,7 +68,7 @@ app.use("/api/locations", locationRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/payments", paymentRoutes);
 app.get("/", (req, res) => res.send("Event Ticket Backend API is running"));
-
+app.use("/api/seats", require("./routes/seatRoutes"));
 
 app.use(errorHandler);
 

@@ -1,5 +1,6 @@
 // controllers/eventController.js
 const Event = require("../models/Event");
+const Seat = require("../models/Seat");
 const slugify = require("slugify");
 const { mapLocationName } = require("../utils/locationHelper");
 const cloudinary = require("../config/cloudinary");
@@ -15,6 +16,73 @@ async function uploadToCloudinary(fileBuffer, folder) {
   });
 }
 
+async function syncEventSeats(event) {
+  const operations = [];
+  const desiredKeys = new Set();
+
+  for (const ticketType of event.ticketTypes || []) {
+    for (const section of ticketType.sections || []) {
+      for (const seatNumber of section.seats || []) {
+        const seat = String(seatNumber).trim();
+
+        if (!seat) continue;
+
+        const key = `${ticketType._id}_${section._id}_${seat}`;
+
+        if (desiredKeys.has(key)) {
+          throw new Error(`Ghế bị trùng trong cấu hình: ${seat}`);
+        }
+
+        desiredKeys.add(key);
+
+        operations.push({
+          updateOne: {
+            filter: {
+              eventId: event._id,
+              ticketTypeId: ticketType._id,
+              sectionId: section._id,
+              seatNumber: seat,
+            },
+            update: {
+              $setOnInsert: {
+                status: "available",
+                reservedUntil: null,
+                orderId: null,
+              },
+            },
+            upsert: true,
+          },
+        });
+      }
+    }
+  }
+
+  if (operations.length > 0) {
+    await Seat.bulkWrite(operations);
+  }
+
+  // Xóa những ghế đã bị loại khỏi cấu hình,
+  // nhưng chỉ xóa ghế vẫn còn available.
+  const existingSeats = await Seat.find({ eventId: event._id })
+    .select("_id ticketTypeId sectionId seatNumber status")
+    .lean();
+
+  const staleSeatIds = existingSeats
+    .filter((seat) => {
+      const key = `${seat.ticketTypeId}_${seat.sectionId}_${seat.seatNumber}`;
+      return !desiredKeys.has(key) && seat.status === "available";
+    })
+    .map((seat) => seat._id);
+
+  if (staleSeatIds.length > 0) {
+    await Seat.deleteMany({
+      _id: { $in: staleSeatIds },
+      eventId: event._id,
+      status: "available",
+    });
+  }
+}
+
 exports.createEvent = async (req, res, next) => {
   try {
     const payload = req.body;
@@ -23,8 +91,8 @@ exports.createEvent = async (req, res, next) => {
     payload.slug =
       payload.slug ||
       slugify(payload.name || "event", { lower: true, strict: true }) +
-        "-" +
-        Date.now().toString(36).slice(-4);
+      "-" +
+      Date.now().toString(36).slice(-4);
 
 
     if (req.files?.coverImage?.[0]) {
@@ -65,7 +133,13 @@ exports.createEvent = async (req, res, next) => {
 
     const event = await Event.create(payload);
 
-    res.status(201).json({ message: "Event created successfully", event });
+    // Đồng bộ danh sách ghế sang collection Seat
+    await syncEventSeats(event);
+
+    res.status(201).json({
+      message: "Event created successfully",
+      event,
+    });
   } catch (err) {
     console.error("Create Event Error:", err);
     next(err);
@@ -75,8 +149,32 @@ exports.createEvent = async (req, res, next) => {
 exports.updateEvent = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const payload = req.body;
-    payload.updatedAt = Date.now();
+    const payload = { ...req.body };
+
+    const event = await Event.findById(id);
+
+    if (!event) {
+      return res.status(404).json({
+        message: "Event not found",
+      });
+    }
+
+    // Parse dữ liệu JSON từ FormData
+    if (payload.ticketTypes && typeof payload.ticketTypes === "string") {
+      payload.ticketTypes = JSON.parse(payload.ticketTypes);
+    }
+
+    if (payload.location && typeof payload.location === "string") {
+      payload.location = JSON.parse(payload.location);
+    }
+
+    // Kiểm tra cấu hình ghế trước khi cập nhật
+    if (payload.ticketTypes) {
+      await validateSeatConfigurationUpdate(
+        event,
+        payload.ticketTypes
+      );
+    }
 
     if (req.files?.coverImage?.[0]) {
       payload.coverImage = await uploadToCloudinary(
@@ -94,8 +192,13 @@ exports.updateEvent = async (req, res, next) => {
 
     if (req.files?.gallery) {
       payload.gallery = [];
-      for (let img of req.files.gallery) {
-        const link = await uploadToCloudinary(img.buffer, "events/gallery");
+
+      for (const img of req.files.gallery) {
+        const link = await uploadToCloudinary(
+          img.buffer,
+          "events/gallery"
+        );
+
         payload.gallery.push(link);
       }
     }
@@ -107,18 +210,32 @@ exports.updateEvent = async (req, res, next) => {
       );
     }
 
-    if (payload.ticketTypes && typeof payload.ticketTypes === "string")
-      payload.ticketTypes = JSON.parse(payload.ticketTypes);
+    // Không cho phép thay đổi người tạo sự kiện
+    delete payload.createdBy;
+    delete payload._id;
 
-    if (payload.location && typeof payload.location === "string")
-      payload.location = JSON.parse(payload.location);
+    event.set(payload);
+    await event.save();
 
-    const event = await Event.findByIdAndUpdate(id, payload, { new: true });
-    if (!event) return res.status(404).json({ message: "Event not found" });
+    // Đồng bộ ghế sau khi cập nhật sự kiện
+    await syncEventSeats(event);
 
-    res.json({ message: "Event updated successfully", event });
+    return res.json({
+      message: "Event updated successfully",
+      event,
+    });
   } catch (err) {
     console.error("Update Event Error:", err);
+
+    if (
+      err.message.includes("Không thể thay đổi cấu hình") ||
+      err.message.includes("Ghế bị trùng")
+    ) {
+      return res.status(400).json({
+        message: err.message,
+      });
+    }
+
     next(err);
   }
 };
@@ -126,8 +243,33 @@ exports.updateEvent = async (req, res, next) => {
 exports.deleteEvent = async (req, res, next) => {
   try {
     const { id } = req.params;
+
+    const event = await Event.findById(id);
+
+    if (!event) {
+      return res.status(404).json({
+        message: "Event not found",
+      });
+    }
+
+    const hasReservedOrSoldSeats = await Seat.exists({
+      eventId: id,
+      status: { $in: ["reserved", "sold"] },
+    });
+
+    if (hasReservedOrSoldSeats) {
+      return res.status(400).json({
+        message:
+          "Không thể xóa sự kiện vì vẫn còn ghế đang được giữ hoặc đã bán",
+      });
+    }
+
+    await Seat.deleteMany({ eventId: id });
     await Event.findByIdAndDelete(id);
-    res.json({ message: "Deleted successfully" });
+
+    res.json({
+      message: "Deleted successfully",
+    });
   } catch (err) {
     console.error("Delete Event Error:", err);
     next(err);

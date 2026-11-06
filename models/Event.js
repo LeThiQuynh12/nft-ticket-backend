@@ -1,11 +1,30 @@
 const mongoose = require("mongoose");
 
+const SectionSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    trim: true,
+  },
+  seats: [{
+    type: String,
+    required: true,
+    trim: true,
+  }],
+  isActive: {
+    type: Boolean,
+    default: true,
+  },
+});
+
 const TicketTypeSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true, default: 0 },
   totalQuantity: { type: Number, default: 0 },
   minPerOrder: { type: Number, default: 1 },
   maxPerOrder: { type: Number, default: 10 },
+
+  sections: [SectionSchema],
 });
 
 const LocationSchema = new mongoose.Schema({
