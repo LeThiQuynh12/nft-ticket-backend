@@ -654,25 +654,35 @@ async function processPendingMints(orderId) {
       );
 
       // Cập nhật ticket sau khi NFT đã được lưu.
-      const ticketUpdateResult = await Order.updateOne(
-        {
-          _id: latestOrder._id,
-          "tickets._id": ticketId,
-          "tickets.txHash": txHash,
-        },
-        {
-          $set: {
-            "tickets.$.nftStatus": "minted",
-            "tickets.$.tokenId": String(tokenId),
-            "tickets.$.metadataURI": metadataURI,
-            "tickets.$.txLink": txLink,
-            "tickets.$.qrCode": qrCode,
-            "tickets.$.mintedAt": mintedAt,
-            "tickets.$.mintError": null,
-          },
-        },
-      );
+const ticketUpdateResult = await Order.updateOne(
+  {
+    _id: latestOrder._id,
+    tickets: {
+      $elemMatch: {
+        _id: ticketId,
+      },
+    },
+  },
+  {
+    $set: {
+      "tickets.$.nftStatus": "minted",
+      "tickets.$.tokenId": String(tokenId),
+      "tickets.$.metadataURI": metadataURI,
+      "tickets.$.txLink": txLink,
+      "tickets.$.txHash": txHash,
+      "tickets.$.qrCode": qrCode,
+      "tickets.$.mintedAt": mintedAt,
+      "tickets.$.mintError": null,
+    },
+  },
+);
 
+console.log("Ticket update result:", ticketUpdateResult);
+
+if (ticketUpdateResult.matchedCount !== 1 ||
+    ticketUpdateResult.modifiedCount !== 1) {
+  throw new Error("Không thể cập nhật trạng thái NFT trong vé");
+}
       if (ticketUpdateResult.matchedCount !== 1) {
         throw new Error("Không thể cập nhật trạng thái NFT trong vé");
       }
@@ -907,6 +917,7 @@ const payosWebhook = async (req, res) => {
 // 4. GET ORDER STATUS
 // ==================================================
 
+
 const getOrderStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -937,18 +948,44 @@ const getOrderStatus = async (req, res) => {
 
     const orderData = order.toObject();
 
-    // Bổ sung khu vực và số ghế từ tickets nếu NFT chưa có
+    // Bổ sung dữ liệu vé gốc cho từng NFT
     orderData.nfts = (orderData.nfts || []).map((nft) => {
-      const ticket = order.tickets.find(
+      const tickets = orderData.tickets || [];
+
+      // Ưu tiên ghép bằng ticketId
+      let ticket = tickets.find(
         (item) =>
-          String(item._id) === String(nft.ticketId) ||
-          String(item.seatId) === String(nft.seatId)
+          nft.ticketId &&
+          String(item._id) === String(nft.ticketId)
       );
+
+      // Nếu không tìm thấy thì ghép bằng seatId
+      if (!ticket && nft.seatId) {
+        ticket = tickets.find(
+          (item) =>
+            item.seatId &&
+            String(item.seatId) === String(nft.seatId)
+        );
+      }
+
+      // Nếu đơn hàng chỉ có một vé thì có thể ghép an toàn
+      if (!ticket && tickets.length === 1) {
+        ticket = tickets[0];
+      }
 
       return {
         ...nft,
+
+        ticketId: nft.ticketId || ticket?._id || null,
+        seatId: nft.seatId || ticket?.seatId || null,
+
+        ticketType: nft.ticketType || ticket?.ticketType || "",
         zone: nft.zone || ticket?.zone || "",
         seat: nft.seat || ticket?.seat || "",
+
+        qrCode: nft.qrCode || ticket?.qrCode || null,
+        txHash: nft.txHash || ticket?.txHash || null,
+        txLink: nft.txLink || ticket?.txLink || null,
       };
     });
 
@@ -966,9 +1003,11 @@ const getOrderStatus = async (req, res) => {
     });
   }
 };
+
 // ==================================================
 // 5. GET MY NFTS
 // ==================================================
+
 
 const getMyNFTs = async (req, res) => {
   try {
@@ -982,24 +1021,53 @@ const getMyNFTs = async (req, res) => {
     const orders = await Order.find({
       "customer.userId": req.user._id,
       status: "paid",
-    }).sort({ createdAt: -1 });
+    })
+      .populate("eventId", "name")
+      .sort({ createdAt: -1 });
 
     const nfts = orders.flatMap((order) =>
-      order.nfts.map((nft) => {
+      (order.nfts || []).map((nft) => {
         const nftData = nft.toObject();
+        const tickets = order.tickets || [];
 
-        const ticket = order.tickets.find(
+        // 1. Ưu tiên ghép bằng ticketId
+        let ticket = tickets.find(
           (item) =>
-            String(item._id) === String(nft.ticketId) ||
-            String(item.seatId) === String(nft.seatId)
+            nftData.ticketId &&
+            String(item._id) === String(nftData.ticketId)
         );
+
+        // 2. Nếu không có ticketId, ghép bằng seatId
+        if (!ticket && nftData.seatId) {
+          ticket = tickets.find(
+            (item) =>
+              String(item.seatId) === String(nftData.seatId)
+          );
+        }
+
+        // 3. Nếu đơn chỉ có đúng một vé thì có thể ghép an toàn
+        if (!ticket && tickets.length === 1) {
+          ticket = tickets[0];
+        }
 
         return {
           ...nftData,
+
+          ticketId: nftData.ticketId || ticket?._id || null,
+          seatId: nftData.seatId || ticket?.seatId || null,
+
           zone: nftData.zone || ticket?.zone || "",
           seat: nftData.seat || ticket?.seat || "",
+
+          ticketType:
+            nftData.ticketType || ticket?.ticketType || "",
+
+          qrCode: nftData.qrCode || ticket?.qrCode || null,
+          txHash: nftData.txHash || ticket?.txHash || null,
+
           orderId: order.orderId,
-          eventId: order.eventId,
+          eventId: order.eventId?._id || null,
+          eventName: order.eventId?.name || "Chưa xác định",
         };
       })
     );
@@ -1018,6 +1086,7 @@ const getMyNFTs = async (req, res) => {
     });
   }
 };
+
 
 // ==================================================
 // 6. GET ALL NFTS - ADMIN
