@@ -10,7 +10,11 @@ const Order = require("../models/Order");
 const Event = require("../models/Event");
 const Seat = require("../models/Seat");
 
-const { mintTicket } = require("../blockchain/connectNFT");
+const {
+  mintTicket,
+  waitForMint,
+  provider,
+} = require("../blockchain/connectNFT");
 const { generateSignature } = require("../utils/payosUtils");
 const {
   createMetadata,
@@ -482,6 +486,11 @@ const createPayment = async (req, res) => {
 // 2. PROCESS NFT MINTING
 // ==================================================
 
+
+// ==================================================
+// 2. PROCESS NFT MINTING
+// ==================================================
+
 async function processPendingMints(orderId) {
   const order = await Order.findById(orderId);
 
@@ -495,124 +504,219 @@ async function processPendingMints(orderId) {
     throw new Error("Không tìm thấy sự kiện để mint NFT");
   }
 
-  for (const originalTicket of order.tickets) {
-    const ticketId = originalTicket._id;
+  // Chỉ lưu ID để tránh sử dụng dữ liệu ticket cũ.
+  const ticketIds = order.tickets.map((ticket) => ticket._id);
 
-    // Chỉ claim vé chưa từng gửi giao dịch lên blockchain.
-    // Vé minting không được tự động claim lại.
-    const claimResult = await Order.updateOne(
-      {
-        _id: order._id,
-        status: "paid",
-        tickets: {
-          $elemMatch: {
-            _id: ticketId,
-            nftStatus: { $in: ["pending", "failed"] },
-            txHash: null,
-            tokenId: null,
-          },
-        },
-      },
-      {
-        $set: {
-          "tickets.$.nftStatus": "minting",
-          "tickets.$.mintError": null,
-        },
-      },
-    );
-
-    if (claimResult.modifiedCount !== 1) {
-      continue;
-    }
-
+  for (const ticketId of ticketIds) {
     let txHash = null;
+    let broadcastAttempted = false;
 
     try {
-      const latestOrder = await Order.findById(order._id);
-      const ticket = latestOrder?.tickets.id(ticketId);
+      // Lấy trạng thái mới nhất của vé.
+      let latestOrder = await Order.findById(order._id);
+
+      if (!latestOrder || latestOrder.status !== "paid") {
+        continue;
+      }
+
+      let ticket = latestOrder.tickets.id(ticketId);
 
       if (!ticket) {
-        throw new Error("Không tìm thấy thông tin vé");
+        continue;
       }
 
-      const recipient =
-        latestOrder.customer.walletAddress ||
-        process.env.CUSTODIAL_WALLET_ADDRESS;
-
-      if (!recipient || !ethers.isAddress(recipient)) {
-        throw new Error("Địa chỉ ví nhận NFT không hợp lệ");
+      // Vé đã mint xong thì bỏ qua.
+      if (ticket.nftStatus === "minted") {
+        continue;
       }
 
-      // Tạo metadata.
-      const metadata = createMetadata({
-        ...ticket.toObject(),
-        eventName: event.name,
-      });
+      // ----------------------------------------------
+      // CASE 1: Vé đang mint và đã có txHash.
+      // Không gửi transaction mới.
+      // Chỉ tiếp tục kiểm tra transaction cũ.
+      // ----------------------------------------------
 
-      const metadataURI = await uploadMetadataToPinata(metadata);
+      let transaction = null;
+      let recipient = null;
+      let metadataURI = ticket.metadataURI;
 
-      if (!metadataURI) {
-        throw new Error("Upload metadata lên Pinata thất bại");
-      }
+      if (ticket.txHash) {
+        txHash = ticket.txHash;
+        broadcastAttempted = true;
 
-      // Kiểm tra giá vé.
-      if (!Number.isSafeInteger(ticket.price) || ticket.price < 0) {
-        throw new Error("Giá vé không hợp lệ để mint NFT");
-      }
+        recipient =
+          latestOrder.customer?.walletAddress ||
+          process.env.CUSTODIAL_WALLET_ADDRESS;
 
-      const contractPrice = BigInt(ticket.price);
+        if (!recipient || !ethers.isAddress(recipient)) {
+          throw new Error("Địa chỉ ví nhận NFT không hợp lệ");
+        }
 
-      // mintTicket phải trả về { tx, tokenId }.
-      const mintResult = await mintTicket(
-        recipient,
-        event.name,
-        ticket.zone,
-        ticket.seat,
-        contractPrice,
-        metadataURI,
-      );
+        transaction = await provider.getTransaction(txHash);
 
-      const tx = mintResult?.tx;
-      const tokenId = mintResult?.tokenId;
+        if (!transaction) {
+          console.log(
+            `[NFT] Transaction chưa được tìm thấy, giữ nguyên trạng thái minting: ${txHash}`
+          );
 
-      if (!tx) {
-        throw new Error("Hàm mintTicket không trả về transaction");
-      }
+          continue;
+        }
 
-      txHash = tx.hash || tx.transactionHash || null;
+        console.log(
+          `[NFT] Tiếp tục xác nhận transaction cũ: ${txHash}`
+        );
+      } else {
+        // ----------------------------------------------
+        // CASE 2: Chưa có txHash.
+        // Chỉ claim vé pending/failed chưa từng broadcast.
+        // ----------------------------------------------
 
-      if (!txHash) {
-        throw new Error("Không lấy được transaction hash");
-      }
-
-      // Lưu transaction hash ngay sau khi nhận kết quả mint.
-      // Nếu các bước sau lỗi, vé vẫn ở trạng thái minting
-      // và không được tự động mint lại.
-      const txSaveResult = await Order.updateOne(
-        {
-          _id: latestOrder._id,
-          "tickets._id": ticketId,
-        },
-        {
-          $set: {
-            "tickets.$.txHash": txHash,
-            "tickets.$.metadataURI": metadataURI,
-            "tickets.$.mintError": null,
+        const claimResult = await Order.updateOne(
+          {
+            _id: order._id,
+            status: "paid",
+            tickets: {
+              $elemMatch: {
+                _id: ticketId,
+                nftStatus: { $in: ["pending", "failed"] },
+                txHash: null,
+                tokenId: null,
+              },
+            },
           },
-        },
+          {
+            $set: {
+              "tickets.$.nftStatus": "minting",
+              "tickets.$.mintError": null,
+            },
+          }
+        );
+
+        if (claimResult.modifiedCount !== 1) {
+          // Có thể một webhook khác đã claim vé.
+          continue;
+        }
+
+        latestOrder = await Order.findById(order._id);
+        ticket = latestOrder?.tickets.id(ticketId);
+
+        if (!ticket) {
+          throw new Error("Không tìm thấy thông tin vé");
+        }
+
+        recipient =
+          latestOrder.customer?.walletAddress ||
+          process.env.CUSTODIAL_WALLET_ADDRESS;
+
+        if (!recipient || !ethers.isAddress(recipient)) {
+          throw new Error("Địa chỉ ví nhận NFT không hợp lệ");
+        }
+
+        // Kiểm tra giá vé.
+        if (
+          !Number.isSafeInteger(ticket.price) ||
+          ticket.price < 0
+        ) {
+          throw new Error("Giá vé không hợp lệ");
+        }
+
+        // Tạo metadata.
+        const metadata = createMetadata({
+          ...ticket.toObject(),
+          eventName: event.name,
+        });
+
+        metadataURI = await uploadMetadataToPinata(metadata);
+
+        if (!metadataURI) {
+          throw new Error("Upload metadata lên Pinata thất bại");
+        }
+
+        // ----------------------------------------------
+        // BƯỚC 1: BROADCAST TRANSACTION
+        // ----------------------------------------------
+
+        // Đặt cờ trước khi gọi RPC.
+        // Nếu RPC gặp lỗi không rõ transaction đã gửi hay chưa,
+        // vé sẽ không bị tự động chuyển về failed để mint lại.
+        broadcastAttempted = true;
+
+        const mintResponse = await mintTicket(
+          recipient,
+          metadataURI
+        );
+
+        txHash = mintResponse?.txHash;
+        transaction = mintResponse?.tx;
+
+        if (!txHash || !transaction) {
+          throw new Error(
+            "Không nhận được transaction hash sau khi broadcast"
+          );
+        }
+
+        console.log("[NFT] Transaction broadcast:", txHash);
+
+        // ----------------------------------------------
+        // BƯỚC 2: LƯU TX HASH NGAY LẬP TỨC
+        // ----------------------------------------------
+
+        const saveTxResult = await Order.updateOne(
+          {
+            _id: order._id,
+            status: "paid",
+            tickets: {
+              $elemMatch: {
+                _id: ticketId,
+                nftStatus: "minting",
+                txHash: null,
+              },
+            },
+          },
+          {
+            $set: {
+              "tickets.$.txHash": txHash,
+              "tickets.$.metadataURI": metadataURI,
+              "tickets.$.mintError": null,
+            },
+          }
+        );
+
+        if (saveTxResult.modifiedCount !== 1) {
+          throw new Error(
+            `Không lưu được transaction hash vào MongoDB: ${txHash}`
+          );
+        }
+
+        console.log("[NFT] Transaction hash saved:", txHash);
+      }
+
+      // ----------------------------------------------
+      // BƯỚC 3: CHỜ BLOCKCHAIN XÁC NHẬN
+      // ----------------------------------------------
+
+      const mintResult = await waitForMint(
+        transaction,
+        recipient
       );
 
-      if (txSaveResult.matchedCount !== 1) {
-        throw new Error("Không thể lưu transaction hash");
-      }
+      const tokenId = mintResult.tokenId;
+      txHash = mintResult.txHash || txHash;
 
       if (tokenId === undefined || tokenId === null) {
-        throw new Error("Không lấy được tokenId từ giao dịch mint");
+        throw new Error("Không lấy được tokenId");
+      }
+
+      if (!txHash) {
+        throw new Error("Không có transaction hash");
       }
 
       const txLink = `${POLYGONSCAN_URL}${txHash}`;
 
-      // Tạo QR Code riêng cho vé.
+      // ----------------------------------------------
+      // BƯỚC 4: TẠO QR CODE
+      // ----------------------------------------------
+
       const qrCode = await QRCode.toDataURL(
         JSON.stringify({
           tokenId: String(tokenId),
@@ -622,16 +726,18 @@ async function processPendingMints(orderId) {
           seat: ticket.seat,
           zone: ticket.zone,
           ticketType: ticket.ticketType,
-        }),
+        })
       );
 
       const mintedAt = new Date();
 
-      // Lưu bản ghi NFT trước.
-      // Điều kiện này giúp webhook retry không push trùng ticketId.
+      // ----------------------------------------------
+      // BƯỚC 5: LƯU NFT - CHỐNG PUSH TRÙNG
+      // ----------------------------------------------
+
       await Order.updateOne(
         {
-          _id: latestOrder._id,
+          _id: order._id,
           "nfts.ticketId": { $ne: ticketId },
         },
         {
@@ -650,83 +756,130 @@ async function processPendingMints(orderId) {
               mintedAt,
             },
           },
-        },
+        }
       );
 
-      // Cập nhật ticket sau khi NFT đã được lưu.
-const ticketUpdateResult = await Order.updateOne(
-  {
-    _id: latestOrder._id,
-    tickets: {
-      $elemMatch: {
-        _id: ticketId,
-      },
-    },
-  },
-  {
-    $set: {
-      "tickets.$.nftStatus": "minted",
-      "tickets.$.tokenId": String(tokenId),
-      "tickets.$.metadataURI": metadataURI,
-      "tickets.$.txLink": txLink,
-      "tickets.$.txHash": txHash,
-      "tickets.$.qrCode": qrCode,
-      "tickets.$.mintedAt": mintedAt,
-      "tickets.$.mintError": null,
-    },
-  },
-);
+      // Kiểm tra NFT đã được lưu hay chưa.
+      // Nếu webhook khác đã lưu trước thì không push thêm.
+      const orderAfterNFTSave = await Order.findById(order._id);
 
-console.log("Ticket update result:", ticketUpdateResult);
+      const existingNFT = orderAfterNFTSave?.nfts.find(
+        (nft) => String(nft.ticketId) === String(ticketId)
+      );
 
-if (ticketUpdateResult.matchedCount !== 1 ||
-    ticketUpdateResult.modifiedCount !== 1) {
-  throw new Error("Không thể cập nhật trạng thái NFT trong vé");
-}
-      if (ticketUpdateResult.matchedCount !== 1) {
-        throw new Error("Không thể cập nhật trạng thái NFT trong vé");
+      if (!existingNFT) {
+        throw new Error(
+          `Không lưu được NFT vào Order: ${ticketId}`
+        );
       }
 
-      console.log(`Minted NFT ${tokenId}: ${txLink}`);
-    } catch (err) {
-      console.error(`Mint NFT error for ticket ${ticketId}:`, err.message);
+      // ----------------------------------------------
+      // BƯỚC 6: CẬP NHẬT TICKET THÀNH MINTED
+      // ----------------------------------------------
 
-      if (txHash) {
-        // Đã có transaction hash: không chuyển về failed
-        // để tránh webhook retry mint NFT lần thứ hai.
-        await Order.updateOne(
-          {
-            _id: order._id,
-            "tickets._id": ticketId,
-          },
-          {
-            $set: {
-              "tickets.$.nftStatus": "minting",
-              "tickets.$.txHash": txHash,
-              "tickets.$.mintError": err.message,
+      const ticketUpdateResult = await Order.updateOne(
+        {
+          _id: order._id,
+          tickets: {
+            $elemMatch: {
+              _id: ticketId,
+              txHash,
             },
           },
+        },
+        {
+          $set: {
+            "tickets.$.nftStatus": "minted",
+            "tickets.$.tokenId": String(tokenId),
+            "tickets.$.metadataURI": metadataURI,
+            "tickets.$.txLink": txLink,
+            "tickets.$.txHash": txHash,
+            "tickets.$.qrCode": qrCode,
+            "tickets.$.mintedAt": mintedAt,
+            "tickets.$.mintError": null,
+          },
+        }
+      );
+
+      if (ticketUpdateResult.matchedCount !== 1) {
+        throw new Error(
+          "Không thể cập nhật trạng thái NFT trong ticket"
         );
-      } else {
-        // Chưa nhận được transaction hash.
-        // Có thể retry sau khi xác minh chắc chắn chưa broadcast.
+      }
+
+      console.log("=================================");
+      console.log("[NFT] Mint completed");
+      console.log("Order:", latestOrder.orderId);
+      console.log("Ticket:", ticketId);
+      console.log("Seat:", ticket.seat);
+      console.log("Token ID:", tokenId);
+      console.log("Transaction:", txHash);
+      console.log("=================================");
+    } catch (err) {
+      console.error(
+        `[NFT] Error for ticket ${ticketId}:`,
+        err.message
+      );
+
+      // ----------------------------------------------
+      // ERROR HANDLING
+      // ----------------------------------------------
+
+      if (txHash || broadcastAttempted) {
+        // Đã có hash hoặc đã bắt đầu gọi broadcast:
+        // KHÔNG tự động chuyển về failed.
+        // Tránh webhook retry gửi transaction mint thứ hai.
+
+        const updateData = {
+          "tickets.$.nftStatus": "minting",
+          "tickets.$.mintError": err.message,
+        };
+
+        if (txHash) {
+          updateData["tickets.$.txHash"] = txHash;
+        }
+
         await Order.updateOne(
           {
             _id: order._id,
             "tickets._id": ticketId,
-            "tickets.txHash": null,
+          },
+          {
+            $set: updateData,
+          }
+        );
+
+        console.warn(
+          `[NFT] Giữ trạng thái minting để kiểm tra transaction: ${txHash || "CHƯA CÓ HASH"}`
+        );
+      } else {
+        // Lỗi xảy ra trước khi bắt đầu broadcast,
+        // ví dụ lỗi tạo metadata hoặc upload Pinata.
+        // Có thể retry an toàn sau khi khắc phục lỗi.
+
+        await Order.updateOne(
+          {
+            _id: order._id,
+            tickets: {
+              $elemMatch: {
+                _id: ticketId,
+                txHash: null,
+                nftStatus: "minting",
+              },
+            },
           },
           {
             $set: {
               "tickets.$.nftStatus": "failed",
               "tickets.$.mintError": err.message,
             },
-          },
+          }
         );
       }
     }
   }
 }
+
 
 // ==================================================
 // 3. PAYOS WEBHOOK
